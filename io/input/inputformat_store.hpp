@@ -26,6 +26,9 @@
 #ifdef WITH_MONGODB
 #include "io/input/mongodb_inputformat.hpp"
 #endif
+#ifdef WITH_REDIS
+#include "io/input/redis_inputformat.hpp"
+#endif
 #include "io/input/separator_inputformat.hpp"
 #include "io/input/xml_inputformat.hpp"
 
@@ -46,6 +49,9 @@ class InputFormatStore {
 #endif
 #ifdef WITH_MONGODB
     static MongoDBInputFormat& create_mongodb_inputformat();
+#endif
+#ifdef WITH_REDIS
+    static RedisInputFormat& create_redis_inputformat();
 #endif
 
     static void drop_all_inputformats();

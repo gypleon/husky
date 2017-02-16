@@ -120,3 +120,9 @@ add_executable(AMAT affinity.cpp)
 target_link_libraries(AMAT ${husky})
 target_link_libraries(AMAT ${HUSKY_EXTERNAL_LIB})
 husky_default_properties(AMAT)
+    
+# PageRankRedis
+add_executable(PageRankRedis pagerank_redis.cpp)
+target_link_libraries(PageRankRedis ${husky})
+target_link_libraries(PageRankRedis ${EXTERNAL_LIB})
+set_property(TARGET PageRankRedis PROPERTY CXX_STANDARD 14)

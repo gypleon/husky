@@ -33,6 +33,10 @@ if(MONGOCLIENT_FOUND)
     list(APPEND input_cpps mongodb_split.cpp mongodb_inputformat.cpp)
 endif(MONGOCLIENT_FOUND)
 
+if(REDISCLIENT_FOUND)
+    list(APPEND input_cpps redis_split.cpp redis_inputformat.cpp)
+endif(REDISCLIENT_FOUND)
+
 if(THRIFT_FOUND)
     list(APPEND input_cpps flume_connector/flume_types.cpp
         flume_connector/flume_constants.cpp

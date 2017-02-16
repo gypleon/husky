@@ -99,6 +99,26 @@ if(WITHOUT_MONGODB)
     unset(MONGOCLIENT_FOUND)
     message(STATUS "Not using MongoClient due to WITHOUT_MONGODB option")
 endif(WITHOUT_MONGODB)
+    
+### Redis ###
+
+find_path(REDISCLIENT_INCLUDE_DIR NAMES hiredis PATHS /home/1155081867/development/redis-3.2.4/deps)
+find_library(REDISCLIENT_LIBRARY NAMES hiredis PATHS /home/1155081867/development/redis-3.2.4/deps/hiredis)
+if (REDISCLIENT_INCLUDE_DIR AND REDISCLIENT_LIBRARY)
+    set(REDISCLIENT_FOUND true)
+endif(REDISCLIENT_INCLUDE_DIR AND REDISCLIENT_LIBRARY)
+if (REDISCLIENT_FOUND)
+    set(REDISCLIENT_DEFINITION "-DWITH_REDIS")
+    message (STATUS "Found Hiredis:")
+    message (STATUS "  (Headers)       ${REDISCLIENT_INCLUDE_DIR}")
+    message (STATUS "  (Library)       ${REDISCLIENT_LIBRARY}")
+else(REDISCLIENT_FOUND)
+    message (STATUS "Could NOT find Hiredis")
+endif(REDISCLIENT_FOUND)
+if(WITHOUT_REDIS)
+    unset(REDISCLIENT_FOUND)
+    message(STATUS "Not using Hiredis due to WITHOUT_REDIS option")
+endif(WITHOUT_REDIS)
 
 ### RT ###
 
