@@ -63,13 +63,18 @@ void RedisSplitAssigner::master_redis_req_handler() {
 
     WorkerInfo work_info = Context::get_worker_info();
     int proc_id = work_info.get_process_id(global_tid);
-
-    // load a batch of keys
-    // TODO: reload keys
-    if ( !is_dynamic_imported_ || !is_pattern_imported_ || !is_file_imported_ ) {
-        load_keys();
+    // TODO: answer RedisMaster info
+    if ( !proc_id ) {
+        // invalid process id -> redis outputformat
+        std::map<std::string, RedisSplit> ret = answer_masters_info(); 
+    } else {
+        // load a batch of keys
+        // TODO: reload keys
+        if ( !is_dynamic_imported_ || !is_pattern_imported_ || !is_file_imported_ ) {
+            load_keys();
+        }
+        RedisBestKeys ret = answer_tid_best_keys(global_tid);
     }
-    RedisBestKeys ret = answer(global_tid);
 
     // for test
     // LOG_I << "worker_" << std::to_string(global_tid) << " (proc_" + std::to_string(proc_id) << ")"; 
@@ -257,7 +262,7 @@ bool RedisSplitAssigner::cache_splits_info() {
 }
 
 // only answer at most num_max_answer_ keys a time
-RedisBestKeys RedisSplitAssigner::answer(int global_tid) {
+RedisBestKeys RedisSplitAssigner::answer_tid_best_keys(int global_tid) {
 
     RedisBestKeys ret;
     WorkerInfo work_info = Context::get_worker_info();
@@ -308,6 +313,15 @@ RedisBestKeys RedisSplitAssigner::answer(int global_tid) {
     return ret;
 }
 
+std::map<std::string, RedisSplit> answer_masters_info() {
+    std::map<std::string, RedisSplit> redis_masters_info;
+    for ( auto& split_group : split_groups_ ) {
+        RedisSplit& master = splits_[split_group.first];
+        redis_masters_info[master.get_id()] = master;
+    }
+    return redis_masters_info;
+}
+
 void RedisSplitAssigner::receive_end(RedisBestKeys& best_keys) {
     std::map<RedisSplit, std::vector<RedisRangeKey> > rs_keys = best_keys.get_keys();
     for ( auto it=rs_keys.begin(); it!=rs_keys.end(); it++){
@@ -322,7 +336,7 @@ uint16_t RedisSplitAssigner::gen_slot_crc16(const char *buf, int len) {
     int counter;
     uint16_t crc = 0;
     for (counter = 0; counter < len; counter++)
-            crc = (crc<<8) ^ crc16tab_[((crc>>8) ^ *buf++)&0x00FF];
+        crc = (crc<<8) ^ crc16tab_[((crc>>8) ^ *buf++)&0x00FF];
     return crc % 16384;
 }
 

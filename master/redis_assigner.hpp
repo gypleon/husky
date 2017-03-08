@@ -47,12 +47,13 @@ public:
     uint16_t gen_slot_crc16(const char *buf, int len);
 
     bool cache_splits_info();
-    RedisBestKeys answer(int global_tid);
+    RedisBestKeys answer_tid_best_keys(int global_tid);
+    std::map<std::string, RedisSplit> answer_masters_info();
 
     void receive_end(RedisBestKeys& best_keys);
  
-    void create_best_keys_pools ();
-    void create_redis_con_pool ();
+    void create_best_keys_pools();
+    void create_redis_con_pool();
     void load_keys();    
     std::string parse_host(const std::string& hostname);
 

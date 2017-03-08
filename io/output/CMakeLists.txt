@@ -21,9 +21,9 @@ if(MONGOCLIENT_FOUND)
     list(APPEND output_cpps mongodb_outputformat.cpp)
 endif(MONGOCLIENT_FOUND)
 
-# if(REDISCLIENT_FOUND)
-#     list(APPEND output_cpps redis_outputformat.cpp)
-# endif(REDISCLIENT_FOUND)
+if(REDISCLIENT_FOUND)
+    list(APPEND output_cpps redis_outputformat.cpp)
+endif(REDISCLIENT_FOUND)
 
 add_library(output-objs OBJECT ${output_cpps})
 husky_default_properties(output-objs)
