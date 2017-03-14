@@ -164,7 +164,6 @@ BinStream& operator>>(BinStream& stream, RedisSplit& split) {
     return stream;
 }
 
-// TODO: may be implemented in a simpler way
 BinStream& operator<<(BinStream& stream, RedisBestKeys& keys) {
     std::map<RedisSplit, std::vector<RedisRangeKey> > best_keys = keys.get_keys();
     // stream << best_keys;
@@ -181,7 +180,6 @@ BinStream& operator<<(BinStream& stream, RedisBestKeys& keys) {
     return stream;
 }
 
-// TODO: may be implemented in a simpler way
 BinStream& operator>>(BinStream& stream, RedisBestKeys& keys) {
     std::map<RedisSplit, std::vector<RedisRangeKey> > best_keys;
     // stream >> best_keys;

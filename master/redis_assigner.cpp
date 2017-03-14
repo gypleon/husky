@@ -62,38 +62,24 @@ void RedisSplitAssigner::master_redis_req_handler() {
     stream >> global_tid;
 
     WorkerInfo work_info = Context::get_worker_info();
-    int proc_id = work_info.get_process_id(global_tid);
-    // TODO: answer RedisMaster info
-    if ( !proc_id ) {
-        // invalid process id -> redis outputformat
-        std::map<std::string, RedisSplit> ret = answer_masters_info(); 
+    stream.clear();
+    if ( work_info.get_largest_tid() < global_tid ) {
+        const std::map<std::string, RedisSplit>& ret = answer_masters_info(); 
+        stream << ret;
     } else {
+        int proc_id = work_info.get_process_id(global_tid);
         // load a batch of keys
         // TODO: reload keys
         if ( !is_dynamic_imported_ || !is_pattern_imported_ || !is_file_imported_ ) {
             load_keys();
         }
         RedisBestKeys ret = answer_tid_best_keys(global_tid);
+        stream << ret;
     }
-
-    // for test
-    // LOG_I << "worker_" << std::to_string(global_tid) << " (proc_" + std::to_string(proc_id) << ")"; 
-    // std::map<RedisSplit, std::vector<RedisRangeKey> > best_keys = ret.get_keys();
-    // for ( auto& kv : best_keys){
-    //     RedisSplit split = kv.first;
-    //     std::vector<RedisRangeKey> keys = kv.second;
-    //     base::log_msg("|-split: " + split.get_ip());
-    //     for ( auto& key : keys){
-    //         base::log_msg("| |-key: " + key.str_ + ", slot: " + std::to_string(gen_slot_crc16(key.str_.c_str(), key.str_.length())) + ", range start:" + std::to_string(key.start_) + ", end:" + std::to_string(key.end_));
-    //     }
-    // }
-    stream.clear();
-    stream << ret;
 
     zmq_sendmore_string(master_socket.get(), master.get_cur_client());
     zmq_sendmore_dummy(master_socket.get());
     zmq_send_binstream(master_socket.get(), stream);
-    // base::log_msg("|-stream len: " + std::to_string(stream.size())); 
 }
 
 void RedisSplitAssigner::master_redis_req_end_handler() {
@@ -110,14 +96,6 @@ void RedisSplitAssigner::master_redis_req_end_handler() {
     zmq_sendmore_string(master_socket.get(), master.get_cur_client());
     zmq_sendmore_dummy(master_socket.get());
     zmq_send_binstream(master_socket.get(), stream);
-
-    // for test
-    // std::map<RedisSplit, std::vector<RedisRangeKey> > rs_keys = best_keys.get_keys();
-    // int num_keys = 0;
-    // for (auto it=rs_keys.begin(); it!=rs_keys.end(); it++){
-    //     num_keys += (it->second).size();
-    // }
-    // base::log_msg("master => end@worker_" + std::to_string(global_tid) + ": num_keys:" + std::to_string(num_keys));
 }
 
 void RedisSplitAssigner::master_setup_handler() {
@@ -159,8 +137,8 @@ void RedisSplitAssigner::set_auth(const std::string& password) {
 void RedisSplitAssigner::reset_auth() { need_auth_ = false; }
 
 bool RedisSplitAssigner::cache_splits_info() {
-    redisContext *c;
-    redisReply *reply;
+    redisContext *c = NULL;
+    redisReply *reply = NULL;
     c = redisConnectWithTimeout( ip_.c_str(), port_, timeout_);
     if (NULL == c || c->err) {
         if (c){
@@ -175,7 +153,6 @@ bool RedisSplitAssigner::cache_splits_info() {
     // TODO: to be tested
     if (need_auth_) {
         reply = redisCmd(c, "AUTH %s", password_.c_str());
-        freeReplyObject(reply);
     }
 
     // get the cluster nodes list
@@ -313,7 +290,7 @@ RedisBestKeys RedisSplitAssigner::answer_tid_best_keys(int global_tid) {
     return ret;
 }
 
-std::map<std::string, RedisSplit> answer_masters_info() {
+std::map<std::string, RedisSplit> RedisSplitAssigner::answer_masters_info() {
     std::map<std::string, RedisSplit> redis_masters_info;
     for ( auto& split_group : split_groups_ ) {
         RedisSplit& master = splits_[split_group.first];
@@ -364,7 +341,7 @@ void RedisSplitAssigner::create_best_keys_pools (){
 
 void RedisSplitAssigner::create_redis_con_pool (){
     // create Redis connection pool
-    redisReply *reply;
+    redisReply *reply = NULL;
     for ( auto& split_group : split_groups_ ) {
         RedisSplit master = splits_[split_group.first];
         redisContext * c = redisConnectWithTimeout( master.get_ip().c_str(), master.get_port(), timeout_);
@@ -385,6 +362,7 @@ void RedisSplitAssigner::create_redis_con_pool (){
 
         cons_[split_group.first] = c;
     } 
+    freeReplyObject(reply);
 }
 
 // TODO: separate load & schedule
@@ -395,7 +373,7 @@ void RedisSplitAssigner::load_keys(){
 
     WorkerInfo work_info = Context::get_worker_info();
     int num_procs = work_info.get_num_processes(); 
-    redisReply *reply;
+    redisReply *reply = NULL;
 
     // load keys from Redis LIST
     if ( !is_dynamic_imported_ && keys_list_.compare("") ) {
@@ -449,7 +427,6 @@ void RedisSplitAssigner::load_keys(){
             // eliminate '\r'
             std::string key = raw_key.erase(raw_key.find_last_not_of(" \r\n")+1);
             batch_keys_.push_back(key);
-            // base::log_msg("push key: "+ key + ", is:" + std::to_string(is_file_imported_));
         }
         if ( !is_file_imported_ )
             cur_pos_ = keys_file_.tellg();
@@ -482,7 +459,6 @@ void RedisSplitAssigner::load_keys(){
                             // if turn on master-slaves load balance
                             if ( true )
                                 split_group.second.update_priority();
-                            // base::log_msg("key:" + range_key.str_ + " - proc_" + std::to_string(proc_id) + ", proc_host:" + proc_host + ", redis ip:" + splits_[candidate_id].get_ip() + ", redis id:" + candidate_id + " (master:" + split_group.first + ")");
                             break;
                         }
                     }
@@ -512,28 +488,23 @@ void RedisSplitAssigner::load_keys(){
                         range_key.start_ = range_start;
                         range_key.end_ = range_start+num_range_per_worker-1;
                         waited_keys_.push_back(range_key);
-                        // base::log_msg("key:" + waited_keys_.back().str_ + " - no proc, start:" + std::to_string(waited_keys_.back().start_) + ", end:" + std::to_string(waited_keys_.back().end_));
                     }
                 }
             }
 
             if ( !is_heavy ) {
                 waited_keys_.push_back(range_key);
-                // base::log_msg("key:" + waited_keys_.back().str_ + " - no proc, start:" + std::to_string(waited_keys_.back().start_) + ", end:" + std::to_string(waited_keys_.back().end_));
             }
         }
     }
 
     // even process keys pools, local optimal
     int avg_amount = num_proc_keys_ / proc_keys_pools_.size() + 1;
-    // base::log_msg("avg_amount:"+std::to_string(avg_amount));
     std::vector<int> proc_num_diffs;
     int diff = 0;
     std::vector<RedisRangeKey> waited_to_balance;
     for ( int i=0; i<proc_keys_pools_.size(); i++ ) {
         if ( (diff = proc_keys_pools_[i].size() - avg_amount) > 0 ) {
-            // base::log_msg("pool_size:"+std::to_string(proc_keys_pools_[i].size()));
-            // base::log_msg("diff:"+std::to_string(diff));
             for ( int j=0; j<diff; j++ ) {
                 waited_to_balance.push_back( proc_keys_pools_[i].back() );
                 proc_keys_pools_[i].pop_back();
@@ -542,7 +513,6 @@ void RedisSplitAssigner::load_keys(){
         proc_num_diffs.push_back( proc_keys_pools_[i].size() - avg_amount );
     }
     while ( !waited_to_balance.empty() ) {
-        // base::log_msg("waited:"+std::to_string(waited_to_balance.size()));
         waited_keys_.push_back( waited_to_balance.back() );
         waited_to_balance.pop_back();
     }
