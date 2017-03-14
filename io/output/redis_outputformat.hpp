@@ -26,8 +26,12 @@
 
 #include "io/output/outputformat_base.hpp"
 #include "io/input/redis_split.hpp"
+#include "core/worker_info.hpp"
+#include "core/context.hpp"
+#include "core/constants.hpp"
 #include "base/serialization.hpp"
 
+#define REQ_REDIS_MASTERS_INFO 666
 #define redisCmd(context, ...) static_cast<redisReply*>(redisCommand(context, __VA_ARGS__))
 
 namespace husky {
@@ -42,6 +46,17 @@ public:
         RedisSet,
         RedisZSet
     } DataType;
+    typedef enum InnerDataType {
+        Other,
+        Char,
+        Short,
+        Int,
+        Long,
+        Bool,
+        Float,
+        Double,
+        String
+    } InnerDataType;
 public:
     RedisOutputFormat();
     ~RedisOutputFormat();
@@ -56,7 +71,8 @@ public:
     template <class DataT>
     bool commit(const std::string& key, const std::map<std::string, DataT>& result_hash);
     void flush_all();
-
+    template <class DataT>
+    char get_template_type(DataT sample);
     uint16_t gen_slot_crc16(const char *buf, int len);
 
 protected:

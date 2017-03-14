@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <string.h>
+
 #include "io/output/redis_outputformat.hpp"
 
 #include "base/log.hpp"
@@ -33,19 +35,23 @@ RedisOutputFormat::~RedisOutputFormat() { records_map_.clear(); }
 void RedisOutputFormat::set_server(const std::string ip, const std::string port) { 
     ip_ = ip; 
     port_ = atoi(port.c_str()); 
-    // TODO: cache RedisMaster info from HuskyMaster
     ask_masters_info();
     create_redis_con_pool();
 }
 
 void RedisOutputFormat::ask_masters_info() {
-
+    WorkerInfo worker_info = husky::Context::get_worker_info();
+    int request_code = worker_info.get_largest_tid() + REQ_REDIS_MASTERS_INFO;
+    BinStream question;
+    question << request_code;
+    BinStream answer = husky::Context::get_coordinator()->ask_master(question, husky::TYPE_REDIS_REQ);
+    answer >> splits_;
 }
 
 void RedisOutputFormat::create_redis_con_pool() {
-    redisReply *reply;
-    for ( auto& split: splits_) {
-        redisContext * c = redisConnectWithTimeout( split.get_ip().c_str(), split.get_port(), timeout_);
+    redisReply *reply = NULL;
+    for ( auto& split: splits_ ) {
+        redisContext * c = redisConnectWithTimeout( split.second.get_ip().c_str(), split.second.get_port(), timeout_);
         if (NULL == c || c->err) {
             if (c){
                 LOG_I << "Connection error: " + std::string(c->errstr);
@@ -58,8 +64,9 @@ void RedisOutputFormat::create_redis_con_pool() {
         if (need_auth_) {
             reply = redisCmd(c, "AUTH %s", password_.c_str());
         }
-        cons_[split.get_id()] = c;
+        cons_[split.second.get_id()] = c;
     }
+    freeReplyObject(reply);
 }
 
 void RedisOutputFormat::set_auth(const std::string& password) {
@@ -77,7 +84,6 @@ bool RedisOutputFormat::commit(const std::string& key, const std::string& result
     const std::string result_stream_buffer = result_stream.to_string();
     std::pair<DataType, std::string> result_type_buffer(data_type, result_stream_buffer);
 
-    // records_map_[key] = std::make_pair<data_type, result_stream_buffer>;
     records_map_[key] = result_type_buffer;
     records_bytes_ += result_stream_buffer.length();
 
@@ -95,11 +101,12 @@ bool RedisOutputFormat::commit(const std::string& key, const std::vector<DataT>&
 
     RedisOutputFormat::DataType data_type = RedisOutputFormat::DataType::RedisList;
     BinStream result_stream;
+    char inner_data_type = get_template_type(result_list[0]);
+    result_stream << inner_data_type;
     result_stream << result_list;
     const std::string result_stream_buffer = result_stream.to_string();
     std::pair<DataType, std::string> result_type_buffer(data_type, result_stream_buffer);
 
-    // records_map_[key] = std::make_pair<data_type, result_stream>;
     records_map_[key] = result_type_buffer;
     // TODO: get stream's length
     records_bytes_ += result_stream_buffer.length();
@@ -118,11 +125,12 @@ bool RedisOutputFormat::commit(const std::string& key, const std::map<std::strin
 
     RedisOutputFormat::DataType data_type = RedisOutputFormat::DataType::RedisHash;
     BinStream result_stream;
+    char inner_data_type = get_template_type(result_hash.begin().second);
+    result_stream << inner_data_type;
     result_stream << result_hash;
     const std::string result_stream_buffer = result_stream.to_string();
     std::pair<DataType, std::string> result_type_buffer(data_type, result_stream_buffer);
 
-    // records_map_[key] = std::make_pair<data_type, result_stream>;
     records_map_[key] = result_type_buffer;
     // TODO: get stream's length
     records_bytes_ += result_stream_buffer.length();
@@ -138,24 +146,9 @@ void RedisOutputFormat::flush_all() {
     if (records_map_.empty())
         return;
 
-    redisContext *c;
-    redisReply *reply;
-    c = redisConnectWithTimeout( ip_.c_str(), port_, timeout_);
-    if (NULL == c || c->err) {
-        if (c){
-            LOG_I << "Connection error: " << c->errstr;
-            redisFree(c);
-        }else{
-            LOG_I << "Connection error: can't allocate redis context";
-        }
-        return;
-    }
+    redisContext *c = NULL;
+    redisReply *reply = NULL;
 
-    if (need_auth_) {
-        reply = redisCmd(c, "AUTH %s", password_.c_str());
-        freeReplyObject(reply);
-    }
-    
     for ( auto& record : records_map_){
         std::string key = record.first;
         RedisOutputFormat::DataType data_type = record.second.first;
@@ -164,8 +157,14 @@ void RedisOutputFormat::flush_all() {
 
         uint16_t target_slot = gen_slot_crc16(key.c_str(), key.length());
         // TODO: according to cached RedisMaster info
+        for (auto& redis_master : splits_) {
+            if (target_slot >= redis_master.second.get_sstart() && target_slot <= redis_master.second.get_send()) {
+                c = cons_[redis_master.second.get_id()];
+                break;
+            }
+        }
         
-        switch (data_type){
+        switch (data_type) {
             case RedisOutputFormat::DataType::RedisString:
                 {
                     std::string result_string;
@@ -175,23 +174,133 @@ void RedisOutputFormat::flush_all() {
                 break;
             case RedisOutputFormat::DataType::RedisList:
                 {
-                    // TODO: how to define inner Type
-                    // TODO: dataT should be brought
-                    template <class DataT>
-                    std::vector<DataT> result_list;
-                    result_stream >> result_list;
-                    for ( auto& result : result_list ) {
-                        redisCmd(c, "LPUSH %s %s", key, result);
+                    char inner_data_type = RedisOutputFormat::InnerDataType::Other;
+                    result_stream >> inner_data_type;
+                    switch (inner_data_type) {
+                        case RedisOutputFormat::InnerDataType::Char:
+                            {
+                                std::vector<char> result_list;
+                                result_stream >> result_list;
+                                for ( auto& result : result_list ) {
+                                    redisCmd(c, "LPUSH %s %c", key, result);
+                                }
+                            }
+                        case RedisOutputFormat::InnerDataType::Short: 
+                        case RedisOutputFormat::InnerDataType::Int: 
+                        case RedisOutputFormat::InnerDataType::Long:
+                            {
+                                std::vector<long int> result_list;
+                                result_stream >> result_list;
+                                for ( auto& result : result_list ) {
+                                    redisCmd(c, "LPUSH %s %d", key, result);
+                                }
+                            }
+                            break;
+                        case RedisOutputFormat::InnerDataType::Bool:
+                            {
+                                std::vector<bool> result_list;
+                                result_stream >> result_list;
+                                for ( auto result : result_list ) {
+                                    redisCmd(c, "LPUSH %s %s", key, result ? "true" : "false");
+                                }
+                            }
+                            break;
+                        case RedisOutputFormat::InnerDataType::Float:
+                            {
+                                std::vector<float> result_list;
+                                result_stream >> result_list;
+                                for ( auto& result : result_list ) {
+                                    redisCmd(c, "LPUSH %s %f", key, result);
+                                }
+                            }
+                            break;
+                        case RedisOutputFormat::InnerDataType::Double:
+                            {
+                                std::vector<double> result_list;
+                                result_stream >> result_list;
+                                for ( auto& result : result_list ) {
+                                    redisCmd(c, "LPUSH %s %lf", key, result);
+                                }
+                            }
+                            break;
+                        case RedisOutputFormat::InnerDataType::String:
+                            {
+                                std::vector<std::string> result_list;
+                                result_stream >> result_list;
+                                for ( auto& result : result_list ) {
+                                    redisCmd(c, "LPUSH %s %s", key, result);
+                                }
+                            }
+                            break;
+                        default:
+                            LOG_E << "undefined inner data type of vector";
+                            break;
                     }
                 }
                 break;
             case RedisOutputFormat::DataType::RedisHash:
                 {
-                    // TODO: how to define inner Type
-                    std::map<RedisOutputFormat::DataType, BinStream> result_map;
-                    result_stream >> result_map;
-                    for ( auto& result : result_map ) {
-                        redisCmd(c, "HSET %s %s %s", key, result.first, result.second);
+                    char inner_data_type = RedisOutputFormat::InnerDataType::Other;
+                    result_stream >> inner_data_type;
+                    switch (inner_data_type) {
+                        case RedisOutputFormat::InnerDataType::Char:
+                            {
+                                std::map<RedisOutputFormat::DataType, char> result_map;
+                                result_stream >> result_map;
+                                for ( auto& result : result_map) {
+                                    redisCmd(c, "HSET %s %s %c", key, result.first, result.second);
+                                }
+                            }
+                        case RedisOutputFormat::InnerDataType::Short: 
+                        case RedisOutputFormat::InnerDataType::Int: 
+                        case RedisOutputFormat::InnerDataType::Long:
+                            {
+                                std::map<RedisOutputFormat::DataType, long int> result_map;
+                                result_stream >> result_map;
+                                for ( auto& result : result_map) {
+                                    redisCmd(c, "HSET %s %s %d", key, result.first, result.second);
+                                }
+                            }
+                            break;
+                        case RedisOutputFormat::InnerDataType::Bool:
+                            {
+                                std::map<RedisOutputFormat::DataType, bool> result_map;
+                                result_stream >> result_map;
+                                for ( auto& result : result_map) {
+                                    redisCmd(c, "HSET %s %s %s", key, result.first, result.second ? "true" : "false");
+                                }
+                            }
+                            break;
+                        case RedisOutputFormat::InnerDataType::Float:
+                            {
+                                std::map<RedisOutputFormat::DataType, float> result_map;
+                                result_stream >> result_map;
+                                for ( auto& result : result_map) {
+                                    redisCmd(c, "HSET %s %s %f", key, result.first, result.second);
+                                }
+                            }
+                            break;
+                        case RedisOutputFormat::InnerDataType::Double:
+                            {
+                                std::map<RedisOutputFormat::DataType, double> result_map;
+                                result_stream >> result_map;
+                                for ( auto& result : result_map) {
+                                    redisCmd(c, "HSET %s %s %lf", key, result.first, result.second);
+                                }
+                            }
+                            break;
+                        case RedisOutputFormat::InnerDataType::String:
+                            {
+                                std::map<RedisOutputFormat::DataType, std::string> result_map;
+                                result_stream >> result_map;
+                                for ( auto& result : result_map) {
+                                    redisCmd(c, "HSET %s %s %s", key, result.first, result.second);
+                                }
+                            }
+                            break;
+                        default:
+                            LOG_E << "undefined inner data type of map";
+                            break;
                     }
                 }
                 break;
@@ -220,6 +329,38 @@ uint16_t RedisOutputFormat::gen_slot_crc16(const char *buf, int len) {
     for (counter = 0; counter < len; counter++)
         crc = (crc<<8) ^ crc16tab_[((crc>>8) ^ *buf++)&0x00FF];
     return crc % 16384;
+}
+
+template<class DataT>
+char RedisOutputFormat::get_template_type(DataT sample) {
+    const char * sample_type = typeid(sample).name();
+    char test_char;
+    short int test_short;
+    int test_int;
+    long int test_long;
+    bool test_bool;
+    float test_float;
+    double test_double;
+    std::string test_string;
+    if (!strcmp(typeid(test_char).name(), sample_type)) {
+        return RedisOutputFormat::InnerDataType::Char;
+    } else if (!strcmp(typeid(test_short).name(), sample_type)) {
+        return RedisOutputFormat::InnerDataType::Short;
+    } else if (!strcmp(typeid(test_int).name(), sample_type)) {
+        return RedisOutputFormat::InnerDataType::Int;
+    } else if (!strcmp(typeid(test_long).name(), sample_type)) {
+        return RedisOutputFormat::InnerDataType::Long;
+    } else if (!strcmp(typeid(test_bool).name(), sample_type)) {
+        return RedisOutputFormat::InnerDataType::Bool;
+    } else if (!strcmp(typeid(test_float).name(), sample_type)) {
+        return RedisOutputFormat::InnerDataType::Float;
+    } else if (!strcmp(typeid(test_double).name(), sample_type)) {
+        return RedisOutputFormat::InnerDataType::Double;
+    } else if (!strcmp(typeid(test_string).name(), sample_type)) {
+        return RedisOutputFormat::InnerDataType::String;
+    } else {
+        return RedisOutputFormat::InnerDataType::Other;
+    }
 }
 
 }  // namespace io
