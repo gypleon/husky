@@ -64,8 +64,9 @@ void RedisSplitAssigner::master_redis_req_handler() {
     WorkerInfo work_info = Context::get_worker_info();
     stream.clear();
     if ( work_info.get_largest_tid() < global_tid ) {
-        const std::map<std::string, RedisSplit>& ret = answer_masters_info(); 
-        stream << ret;
+        std::map<std::string, RedisSplit> redis_masters_info; 
+        answer_masters_info(redis_masters_info); 
+        stream << redis_masters_info;
     } else {
         int proc_id = work_info.get_process_id(global_tid);
         // load a batch of keys
@@ -123,7 +124,9 @@ RedisSplitAssigner::~RedisSplitAssigner() {
     }
     // release Redis connection pool
     for ( auto& con : cons_ ) {
-        redisFree(con.second);
+        if (con.second) {
+            redisFree(con.second);
+        }
     }
     cons_.clear();
     batch_keys_.clear();
@@ -232,8 +235,12 @@ bool RedisSplitAssigner::cache_splits_info() {
     }
     LOG_I << "\033[1;32m====================================================\033[0m";
 
-    freeReplyObject(reply);
-    redisFree(c);
+    if (reply) {
+        freeReplyObject(reply);
+    }
+    if (c) {
+        redisFree(c);
+    }
 
     split_num_ = splits_.size();
 }
@@ -290,13 +297,11 @@ RedisBestKeys RedisSplitAssigner::answer_tid_best_keys(int global_tid) {
     return ret;
 }
 
-std::map<std::string, RedisSplit> RedisSplitAssigner::answer_masters_info() {
-    std::map<std::string, RedisSplit> redis_masters_info;
+void RedisSplitAssigner::answer_masters_info(std::map<std::string, RedisSplit>& redis_masters_info) {
     for ( auto& split_group : split_groups_ ) {
         RedisSplit& master = splits_[split_group.first];
         redis_masters_info[master.get_id()] = master;
     }
-    return redis_masters_info;
 }
 
 void RedisSplitAssigner::receive_end(RedisBestKeys& best_keys) {
@@ -362,7 +367,9 @@ void RedisSplitAssigner::create_redis_con_pool (){
 
         cons_[split_group.first] = c;
     } 
-    freeReplyObject(reply);
+    if (reply) {
+        freeReplyObject(reply);
+    }
 }
 
 // TODO: separate load & schedule
@@ -522,7 +529,9 @@ void RedisSplitAssigner::load_keys(){
     LOG_I << "schedule time: " + std::to_string(interval.count());
     start = std::chrono::system_clock::now();
     
-    freeReplyObject(reply);
+    if (reply) {
+        freeReplyObject(reply);
+    }
 }
 
 }  // namespace husky

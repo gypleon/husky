@@ -139,6 +139,19 @@ BinStream& operator<<(BinStream& stream, RedisSplit& split) {
     return stream;
 }
 
+// for RedisOutputFormat::redis_masters_info
+// TODO: why RedisSplit changed into const
+BinStream& operator<<(BinStream& stream, const RedisSplit& split) {
+    stream << split.is_valid();
+    stream << split.get_id();
+    stream << split.get_ip();
+    stream << split.get_port();
+    stream << split.get_master();
+    stream << split.get_sstart();
+    stream << split.get_send();
+    return stream;
+}
+
 BinStream& operator>>(BinStream& stream, RedisSplit& split) {
     bool is_valid;
     std::string id;

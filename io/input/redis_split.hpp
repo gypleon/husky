@@ -137,7 +137,7 @@ struct RedisRangeKey {
     int end_ = -1;
 };
 
-BinStream& operator<<(BinStream& stream, RedisSplit& split);
+BinStream& operator<<(BinStream& stream, const RedisSplit& split);
 BinStream& operator>>(BinStream& stream, RedisSplit& split);
 
 BinStream& operator<<(BinStream& stream, RedisBestKeys& keys);
