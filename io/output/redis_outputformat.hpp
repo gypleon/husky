@@ -38,7 +38,7 @@ namespace husky {
 namespace io {
 
 class RedisOutputFormat final : public OutputFormatBase {
-public:
+private:
     typedef enum DataType {
         RedisString,
         RedisList,
@@ -58,10 +58,12 @@ public:
         String
     } InnerDataType;
 public:
-    RedisOutputFormat();
+    RedisOutputFormat(int number_clients = 10, int flush_buffer_size = 1024);
     ~RedisOutputFormat();
+    virtual bool is_setup() const;
+
     void set_auth(const std::string& password);
-    void set_server(const std::string ip, const std::string port);
+    void set_server();
     void ask_masters_info();
     void create_redis_con_pool();
 
@@ -78,16 +80,16 @@ public:
 protected:
     bool need_auth_ = false;
     std::string password_;
-    std::string ip_;
     // mixed-type data waited to be flushed
     std::map<std::string, std::pair<DataType, std::string> > records_map_;
     // for Redis
-    int port_;
     struct timeval timeout_ = { 1, 500000};
     int records_bytes_ = 0;
-    // TODO: connection pool
+    // TODO: maybe multi-client (connections)
+    // number of connections for each redis master
+    int number_clients_;
+    int flush_buffer_size_;
     std::map<std::string, redisContext *> cons_;
-    // TODO:
     std::map<std::string, RedisSplit> splits_;
     const uint16_t crc16tab_[256]= {
         0x0000,0x1021,0x2042,0x3063,0x4084,0x50a5,0x60c6,0x70e7,

@@ -56,6 +56,12 @@ target_link_libraries(TestMongoDBOutputFormat ${husky})
 target_link_libraries(TestMongoDBOutputFormat ${HUSKY_EXTERNAL_LIB})
 husky_default_properties(TestMongoDBOutputFormat)
 
+# TestRedisOutputFormat
+add_executable(TestRedisOutputFormat test-redis-outputformat.cpp)
+target_link_libraries(TestRedisOutputFormat ${husky})
+target_link_libraries(TestRedisOutputFormat ${HUSKY_EXTERNAL_LIB})
+husky_default_properties(TestRedisOutputFormat)
+
 # TestMemoryChecker
 add_executable(TestMemoryChecker test-memory-checker.cpp)
 target_link_libraries(TestMemoryChecker ${husky})

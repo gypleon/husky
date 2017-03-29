@@ -23,21 +23,38 @@ namespace io {
 
 using base::log_msg;
 
-// TODO: perhaps could be dynamically tuned
-const int kMaxNumberOfRecordBytes = 10240;
+enum RedisOutputFormatSetUp {
+    NotSetUp = 0,
+    ServerSetUp = 1 << 2,
+    AuthSetUp = 1 << 2,
+    AllSetUp = ServerSetUp | AuthSetUp,
+};
 
-RedisOutputFormat::RedisOutputFormat() {
+RedisOutputFormat::RedisOutputFormat(int number_clients, int flush_buffer_size): number_clients_(number_clients), flush_buffer_size_(flush_buffer_size) {
     records_map_.clear();
+    cons_.clear();
+    splits_.clear();
 }
 
-RedisOutputFormat::~RedisOutputFormat() { records_map_.clear(); }
+RedisOutputFormat::~RedisOutputFormat() { 
+    records_map_.clear(); 
+    cons_.clear();
+    splits_.clear();
+}
 
-void RedisOutputFormat::set_server(const std::string ip, const std::string port) { 
-    ip_ = ip; 
-    port_ = atoi(port.c_str()); 
+void RedisOutputFormat::set_server() { 
     ask_masters_info();
     create_redis_con_pool();
+    is_setup_ |= RedisOutputFormatSetUp::ServerSetUp;
 }
+
+void RedisOutputFormat::set_auth(const std::string& password) {
+    password_ = password;
+    need_auth_ = true;
+    is_setup_ |= RedisOutputFormatSetUp::AuthSetUp;
+}
+
+bool RedisOutputFormat::is_setup() const { return !(is_setup_ ^ RedisOutputFormatSetUp::AllSetUp); }
 
 void RedisOutputFormat::ask_masters_info() {
     WorkerInfo worker_info = husky::Context::get_worker_info();
@@ -66,28 +83,24 @@ void RedisOutputFormat::create_redis_con_pool() {
         }
         cons_[split.second.get_id()] = c;
     }
-    freeReplyObject(reply);
-}
-
-void RedisOutputFormat::set_auth(const std::string& password) {
-    password_ = password;
-    need_auth_ = true;
+    if (reply) {
+        freeReplyObject(reply);
+    }
 }
 
 bool RedisOutputFormat::commit(const std::string& key, const std::string& result_string) {
+    if (!is_setup())
+        return false;
     if (result_string.empty())
         return false;
 
     const RedisOutputFormat::DataType data_type = RedisOutputFormat::DataType::RedisString;
-    BinStream result_stream;
-    result_stream << result_string;
-    const std::string result_stream_buffer = result_stream.to_string();
-    std::pair<DataType, std::string> result_type_buffer(data_type, result_stream_buffer);
+    std::pair<DataType, std::string> result_type_buffer(data_type, result_string);
 
     records_map_[key] = result_type_buffer;
-    records_bytes_ += result_stream_buffer.length();
+    records_bytes_ += result_string.length();
 
-    if (records_bytes_ >= kMaxNumberOfRecordBytes)
+    if (records_bytes_ >= flush_buffer_size_)
     {
         flush_all();
         return true;
@@ -96,6 +109,8 @@ bool RedisOutputFormat::commit(const std::string& key, const std::string& result
 
 template <class DataT>
 bool RedisOutputFormat::commit(const std::string& key, const std::vector<DataT>& result_list) {
+    if (!is_setup())
+        return false;
     if (result_list.empty())
         return false;
 
@@ -111,7 +126,7 @@ bool RedisOutputFormat::commit(const std::string& key, const std::vector<DataT>&
     // TODO: get stream's length
     records_bytes_ += result_stream_buffer.length();
 
-    if (records_bytes_ >= kMaxNumberOfRecordBytes)
+    if (records_bytes_ >= flush_buffer_size_)
     {
         flush_all();
         return true;
@@ -120,6 +135,8 @@ bool RedisOutputFormat::commit(const std::string& key, const std::vector<DataT>&
 
 template <class DataT>
 bool RedisOutputFormat::commit(const std::string& key, const std::map<std::string, DataT>& result_hash) {
+    if (!is_setup())
+        return false;
     if (result_hash.empty())
         return false;
 
@@ -135,7 +152,7 @@ bool RedisOutputFormat::commit(const std::string& key, const std::map<std::strin
     // TODO: get stream's length
     records_bytes_ += result_stream_buffer.length();
 
-    if (records_bytes_ >= kMaxNumberOfRecordBytes)
+    if (records_bytes_ >= flush_buffer_size_)
     {
         flush_all();
         return true;
@@ -156,7 +173,6 @@ void RedisOutputFormat::flush_all() {
         result_stream << record.second.second;
 
         uint16_t target_slot = gen_slot_crc16(key.c_str(), key.length());
-        // TODO: according to cached RedisMaster info
         for (auto& redis_master : splits_) {
             if (target_slot >= redis_master.second.get_sstart() && target_slot <= redis_master.second.get_send()) {
                 c = cons_[redis_master.second.get_id()];
@@ -167,9 +183,8 @@ void RedisOutputFormat::flush_all() {
         switch (data_type) {
             case RedisOutputFormat::DataType::RedisString:
                 {
-                    std::string result_string;
-                    result_stream >> result_string;
-                    redisCmd(c, "SET %s %s", key, result_string);
+                    const std::string& result_string = record.second.second;
+                    redisCmd(c, "SET key:%s %s", key, result_string.c_str());
                 }
                 break;
             case RedisOutputFormat::DataType::RedisList:
@@ -316,8 +331,12 @@ void RedisOutputFormat::flush_all() {
         }
     }
 
-    freeReplyObject(reply);
-    redisFree(c);
+    if (reply) {
+        freeReplyObject(reply);
+    }
+    if (c) {
+        redisFree(c);
+    }
 
     records_map_.clear();
     records_bytes_ = 0;
@@ -342,8 +361,8 @@ char RedisOutputFormat::get_template_type(DataT sample) {
     float test_float;
     double test_double;
     std::string test_string;
-    if (!strcmp(typeid(test_char).name(), sample_type)) {
-        return RedisOutputFormat::InnerDataType::Char;
+    if (!strcmp(typeid(test_string).name(), sample_type)) {
+        return RedisOutputFormat::InnerDataType::String;
     } else if (!strcmp(typeid(test_short).name(), sample_type)) {
         return RedisOutputFormat::InnerDataType::Short;
     } else if (!strcmp(typeid(test_int).name(), sample_type)) {
@@ -356,8 +375,8 @@ char RedisOutputFormat::get_template_type(DataT sample) {
         return RedisOutputFormat::InnerDataType::Float;
     } else if (!strcmp(typeid(test_double).name(), sample_type)) {
         return RedisOutputFormat::InnerDataType::Double;
-    } else if (!strcmp(typeid(test_string).name(), sample_type)) {
-        return RedisOutputFormat::InnerDataType::String;
+    } else if (!strcmp(typeid(test_char).name(), sample_type)) {
+        return RedisOutputFormat::InnerDataType::Char;
     } else {
         return RedisOutputFormat::InnerDataType::Other;
     }

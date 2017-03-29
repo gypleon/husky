@@ -48,7 +48,7 @@ public:
 
     bool cache_splits_info();
     RedisBestKeys answer_tid_best_keys(int global_tid);
-    std::map<std::string, RedisSplit> answer_masters_info();
+    void answer_masters_info(std::map<std::string, RedisSplit>& redis_masters_info);
 
     void receive_end(RedisBestKeys& best_keys);
  
@@ -80,7 +80,6 @@ private:
     std::vector<RedisRangeKey> fetched_keys_;
     // num of keys have been fetched, splitted heavy keys will be counted repeatedly
     int end_count_;
-
     int num_workers_assigned_;
 
     std::string keys_path_;
