@@ -41,6 +41,8 @@
 #include <ctime>
 #include <chrono>
 
+#define CHECK(X) if ( !X || X->type == REDIS_REPLY_ERROR ) { LOG_E << "Error"; exit(-1); }
+
 namespace husky {
 
 static RedisSplitAssigner redis_split_assigner;
@@ -64,6 +66,7 @@ void RedisSplitAssigner::master_redis_req_handler() {
     WorkerInfo work_info = Context::get_worker_info();
     stream.clear();
     if ( work_info.get_largest_tid() < global_tid ) {
+        refresh_splits_info();
         std::map<std::string, RedisSplit> redis_masters_info; 
         answer_masters_info(redis_masters_info); 
         stream << redis_masters_info;
@@ -139,16 +142,16 @@ void RedisSplitAssigner::set_auth(const std::string& password) {
 
 void RedisSplitAssigner::reset_auth() { need_auth_ = false; }
 
-bool RedisSplitAssigner::cache_splits_info() {
+bool RedisSplitAssigner::refresh_splits_info() {
     redisContext *c = NULL;
     redisReply *reply = NULL;
     c = redisConnectWithTimeout( ip_.c_str(), port_, timeout_);
     if (NULL == c || c->err) {
         if (c){
-            LOG_I << "Connection error: " << std::string(c->errstr);
+            LOG_E << "Connection error: " << std::string(c->errstr);
             redisFree(c);
         }else{
-            LOG_I << "Connection error: can't allocate redis context";
+            LOG_E << "Connection error: can't allocate redis context";
         }
         return 0;
     }
@@ -156,6 +159,7 @@ bool RedisSplitAssigner::cache_splits_info() {
     // TODO: to be tested
     if (need_auth_) {
         reply = redisCmd(c, "AUTH %s", password_.c_str());
+        CHECK(reply);
     }
 
     // get the cluster nodes list
@@ -223,6 +227,21 @@ bool RedisSplitAssigner::cache_splits_info() {
             split_groups_[my_master].add_member(split.first);
         }
     }
+
+    if (reply) {
+        freeReplyObject(reply);
+    }
+    if (c) {
+        redisFree(c);
+    }
+
+    split_num_ = splits_.size();
+}
+
+bool RedisSplitAssigner::cache_splits_info() {
+
+    refresh_splits_info();
+
     for ( auto& split_group : split_groups_) {
         const std::vector<std::string> members = split_group.second.get_members();
         LOG_I << "\033[1;32m====================================================\033[0m";
@@ -234,15 +253,6 @@ bool RedisSplitAssigner::cache_splits_info() {
         }
     }
     LOG_I << "\033[1;32m====================================================\033[0m";
-
-    if (reply) {
-        freeReplyObject(reply);
-    }
-    if (c) {
-        redisFree(c);
-    }
-
-    split_num_ = splits_.size();
 }
 
 // only answer at most num_max_answer_ keys a time

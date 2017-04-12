@@ -15,6 +15,8 @@
 #include <functional>
 #include <iostream>
 #include <string>
+#include <map>
+#include <vector>
 
 #include "boost/tokenizer.hpp"
 #include "mongo/bson/bson.h"
@@ -40,12 +42,35 @@ void test() {
     outputformat.set_server();
     // outputformat.set_auth(pwd);
 
+    mongo::BSONElement fields[5];
     auto read_and_write = [&](std::string& chunk) {
         mongo::BSONObj o = mongo::fromjson(chunk);
-        // RedisOutputFormat::commit(const std::string& key, const std::string& content)
-        husky::LOG_I << o.getField("title");
-        outputformat.commit(o.getField("_id").toString() + o.getField("title").toString(), o.getField("content").toString());
-        // TODO: write std::map
+        // parse data
+        const char * field_names[] = {"title", "url", "content", "id", "md5"};
+        o.getFields(5, field_names, fields);
+
+        // commit string
+        std::string key = fields[0].toString(false, true);
+        std::string str_data = fields[2].toString(false, true);
+        outputformat.commit(key, str_data);
+
+        // commit map
+        // std::string key = fields[4].toString(false, true);
+        // std::map<std::string, std::string> map_data;
+        // map_data["title"] = fields[0].toString(false, true);
+        // map_data["url"] = fields[1].toString(false, true);
+        // map_data["content"] = fields[2].toString(false, true);
+        // map_data["id"] = fields[3].toString(false, true);
+        // outputformat.commit(key, map_data);
+
+        // commit vector
+        // std::string key = fields[4].toString(false, true);
+        // std::vector<std::string> vec_data;
+        // vec_data.push_back(fields[0].toString(false, true));
+        // vec_data.push_back(fields[1].toString(false, true));
+        // vec_data.push_back(fields[2].toString(false, true));
+        // vec_data.push_back(fields[3].toString(false, true));
+        // outputformat.commit(key, vec_data);
     };
 
     husky::load(inputformat, read_and_write);

@@ -47,6 +47,7 @@ public:
     uint16_t gen_slot_crc16(const char *buf, int len);
 
     bool cache_splits_info();
+    bool refresh_splits_info();
     RedisBestKeys answer_tid_best_keys(int global_tid);
     void answer_masters_info(std::map<std::string, RedisSplit>& redis_masters_info);
 

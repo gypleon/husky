@@ -58,7 +58,7 @@ private:
         String
     } InnerDataType;
 public:
-    RedisOutputFormat(int number_clients = 10, int flush_buffer_size = 1024);
+    RedisOutputFormat(int number_clients = 10, int flush_buffer_size = 10240);
     ~RedisOutputFormat();
     virtual bool is_setup() const;
 
@@ -76,6 +76,7 @@ public:
     template <class DataT>
     char get_template_type(DataT sample);
     uint16_t gen_slot_crc16(const char *buf, int len);
+    std::string parse_host(const std::string& hostname);
 
 protected:
     bool need_auth_ = false;
@@ -89,7 +90,7 @@ protected:
     // number of connections for each redis master
     int number_clients_;
     int flush_buffer_size_;
-    std::map<std::string, redisContext *> cons_;
+    std::map<std::string, std::pair<redisContext *, int> > cons_;
     std::map<std::string, RedisSplit> splits_;
     const uint16_t crc16tab_[256]= {
         0x0000,0x1021,0x2042,0x3063,0x4084,0x50a5,0x60c6,0x70e7,
