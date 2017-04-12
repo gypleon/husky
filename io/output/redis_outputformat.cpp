@@ -13,10 +13,21 @@
 // limitations under the License.
 
 #include <string.h>
+#include <netdb.h>
+#include <sys/param.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 
 #include "io/output/redis_outputformat.hpp"
 
 #include "base/log.hpp"
+#include "core/network.hpp"
+
+// for experiments
+#include <ctime>
+#include <chrono>
+
+#define CHECK(X) if ( !X || X->type == REDIS_REPLY_ERROR ) { LOG_E << "Error"; exit(-1); }
 
 namespace husky {
 namespace io {
@@ -38,6 +49,12 @@ RedisOutputFormat::RedisOutputFormat(int number_clients, int flush_buffer_size):
 
 RedisOutputFormat::~RedisOutputFormat() { 
     records_map_.clear(); 
+    for ( auto& con : cons_ ) {
+        if ( con.second.first ) {
+            redisFree(con.second.first);
+            con.second.first = NULL;
+        }
+    }
     cons_.clear();
     splits_.clear();
 }
@@ -65,23 +82,42 @@ void RedisOutputFormat::ask_masters_info() {
     answer >> splits_;
 }
 
+std::string RedisOutputFormat::parse_host(const std::string& hostname){
+    hostent * record = gethostbyname(hostname.c_str());
+    if(record == NULL){
+        LOG_E << "Hostname parse failed:" << hostname;
+        return "failed";
+    }
+    in_addr * address = (in_addr * )record->h_addr;
+    std::string ip_address = inet_ntoa(*address);
+    return ip_address;
+}
+
 void RedisOutputFormat::create_redis_con_pool() {
     redisReply *reply = NULL;
     for ( auto& split: splits_ ) {
-        redisContext * c = redisConnectWithTimeout( split.second.get_ip().c_str(), split.second.get_port(), timeout_);
+        std::string proc_ip = parse_host(get_hostname());
+        redisContext * c = NULL;
+        if ( !split.second.get_ip().compare(proc_ip) ) {
+            c = redisConnectUnixWithTimeout("/tmp/redis.sock", timeout_);
+        } else {
+            c = redisConnectWithTimeout( split.second.get_ip().c_str(), split.second.get_port(), timeout_);
+        }
         if (NULL == c || c->err) {
             if (c){
-                LOG_I << "Connection error: " + std::string(c->errstr);
+                LOG_E << "Connection error: " + std::string(c->errstr);
                 redisFree(c);
             } else {
-                LOG_I << "Connection error: can't allocate redis context";
+                LOG_E << "Connection error: can't allocate redis context";
             }
             return;
         }
         if (need_auth_) {
             reply = redisCmd(c, "AUTH %s", password_.c_str());
+            CHECK(reply);
         }
-        cons_[split.second.get_id()] = c;
+        std::pair<redisContext *, int> con(c, 0);
+        cons_[split.second.get_id()] = con;
     }
     if (reply) {
         freeReplyObject(reply);
@@ -123,7 +159,6 @@ bool RedisOutputFormat::commit(const std::string& key, const std::vector<DataT>&
     std::pair<DataType, std::string> result_type_buffer(data_type, result_stream_buffer);
 
     records_map_[key] = result_type_buffer;
-    // TODO: get stream's length
     records_bytes_ += result_stream_buffer.length();
 
     if (records_bytes_ >= flush_buffer_size_)
@@ -149,7 +184,6 @@ bool RedisOutputFormat::commit(const std::string& key, const std::map<std::strin
     std::pair<DataType, std::string> result_type_buffer(data_type, result_stream_buffer);
 
     records_map_[key] = result_type_buffer;
-    // TODO: get stream's length
     records_bytes_ += result_stream_buffer.length();
 
     if (records_bytes_ >= flush_buffer_size_)
@@ -163,7 +197,8 @@ void RedisOutputFormat::flush_all() {
     if (records_map_.empty())
         return;
 
-    redisContext *c = NULL;
+    redisContext * c = NULL;
+    int * c_count = 0;
     redisReply *reply = NULL;
 
     for ( auto& record : records_map_){
@@ -175,7 +210,9 @@ void RedisOutputFormat::flush_all() {
         uint16_t target_slot = gen_slot_crc16(key.c_str(), key.length());
         for (auto& redis_master : splits_) {
             if (target_slot >= redis_master.second.get_sstart() && target_slot <= redis_master.second.get_send()) {
-                c = cons_[redis_master.second.get_id()];
+                c = cons_[redis_master.second.get_id()].first;
+                c_count = &cons_[redis_master.second.get_id()].second;
+                // husky::LOG_I << redis_master.second.get_ip();
                 break;
             }
         }
@@ -184,7 +221,12 @@ void RedisOutputFormat::flush_all() {
             case RedisOutputFormat::DataType::RedisString:
                 {
                     const std::string& result_string = record.second.second;
-                    redisCmd(c, "SET key:%s %s", key, result_string.c_str());
+                    // husky::LOG_I << key << ", " << result_string;
+                    // redisCmd(c, "SET %b %b", key.c_str(), (size_t) key.length(), result_string.c_str(), (size_t) result_string.length());
+                    // husky::LOG_I << "reply" ;
+
+                    redisAppendCommand(c, "SET %b %b", key.c_str(), (size_t) key.length(), result_string.c_str(), (size_t) result_string.length());
+                    ++(*c_count);
                 }
                 break;
             case RedisOutputFormat::DataType::RedisList:
@@ -331,11 +373,28 @@ void RedisOutputFormat::flush_all() {
         }
     }
 
+    for ( auto& con : cons_ ) {
+        while ( con.second.second-- > 0 ) {
+            int r = redisGetReply(con.second.first, (void **) &reply );
+            if ( r == REDIS_ERR ) { 
+                LOG_E << "REDIS_ERR"; 
+                exit(-1); 
+            }
+            // CHECK(reply);
+            if ( !reply ) {
+                LOG_E << "NULL REPLY"; 
+            } else if ( reply->type == REDIS_REPLY_ERROR ) { 
+                LOG_E << "REDIS_REPLY_ERROR -> " << reply->str; 
+                LOG_I << "pipeline remained -> " << con.second.second;
+                ask_masters_info();
+            }
+        }
+        con.second.second = con.second.second < 0 ? 0 : con.second.second;
+    }
+
     if (reply) {
         freeReplyObject(reply);
-    }
-    if (c) {
-        redisFree(c);
+        reply = NULL;
     }
 
     records_map_.clear();
