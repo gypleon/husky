@@ -21,10 +21,17 @@
 #include <utility>
 #include <map>
 
+#include <string.h>
+#include <netdb.h>
+#include <sys/param.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+
 #include "base/serialization.hpp"
 #include "core/constants.hpp"
 #include "core/context.hpp"
 #include "core/coordinator.hpp"
+#include "core/network.hpp"
 
 #include "hiredis/hiredis.h"
 #include "boost/property_tree/ptree.hpp"
@@ -85,24 +92,43 @@ bool RedisInputFormat::ask_best_keys() {
     }
 }
 
+std::string RedisInputFormat::parse_host(const std::string& hostname){
+    hostent * record = gethostbyname(hostname.c_str());
+    if(record == NULL){
+        LOG_E << "Hostname parse failed: " << hostname;
+        return "failed";
+    }
+    in_addr * address = (in_addr * )record->h_addr;
+    std::string ip_address = inet_ntoa(*address);
+    return ip_address;
+}
+
 // connect Redis split to retrieve RECORDS
 void RedisInputFormat::fetch_split_records(const RedisSplit& split, const std::vector<RedisRangeKey>& keys){
 
     if (!split.is_valid()) {
-        LOG_I << "Redis split invalid: " << split.get_id();
+        LOG_E << "Redis split invalid: " << split.get_id();
         return;
     }
 
-    redisContext * c;
+    redisContext * c = NULL;
     if ( cons_.end() != cons_.find(split.get_id()) ) {
         c = cons_[split.get_id()];
     } else {
-        c = redisConnectWithTimeout(split.get_ip().c_str(), split.get_port(), timeout_);
+        std::string proc_ip = parse_host(get_hostname());
+        if ( !split.get_ip().compare(proc_ip) ) {
+            std::string sock_file_path = "/tmp/redis_";
+            sock_file_path += std::to_string(split.get_port()) + ".sock";
+            c = redisConnectUnixWithTimeout(sock_file_path.c_str(), timeout_);
+        } else {
+            c = redisConnectWithTimeout(split.get_ip().c_str(), split.get_port(), timeout_);
+        }
         if (NULL == c || c->err){
             if (c){
+                LOG_E << "Connection error: " + std::string(c->errstr);
                 redisFree(c);
             } else {
-                LOG_I << "Connection error: can't allocate redis context";
+                LOG_E << "Connection error: can't allocate redis context";
             }
             return;
         }
@@ -120,7 +146,7 @@ void RedisInputFormat::fetch_split_records(const RedisSplit& split, const std::v
         redisReply * reply;
         reply = redisCmd(c, "READONLY");
         if ( strcmp(reply->str, "OK") ) {
-            LOG_I << "Slave fail to start up read-only";
+            LOG_E << "Slave failed to start up read-only";
             freeReplyObject(reply);
             return;
         }
@@ -128,6 +154,10 @@ void RedisInputFormat::fetch_split_records(const RedisSplit& split, const std::v
     }
 
     for ( auto& key : keys) {
+        if ( !key.str_.compare("") ) {
+            LOG_E << "empty key <- " << split.get_ip() << ":" << split.get_port();
+            continue;
+        }
         redisReply * cur_data = redisCmd(c, "TYPE %s", key.str_.c_str());
         if (!strcmp(cur_data->str, "string")){
             pt::ptree string_js;
@@ -219,9 +249,9 @@ void RedisInputFormat::fetch_split_records(const RedisSplit& split, const std::v
             std::string jsonstring = jsonvalue.str();
             records_vector_.push_back(std::make_pair<std::string, std::string>("zset", jsonstring.c_str()));
         } else if (nullptr != cur_data->str){
-            LOG_I << "Failed to read data " << std::string(cur_data->str);
+            LOG_E << "Failed to read data :" << std::string(cur_data->str) << " <- " << gen_slot_crc16(key.str_.c_str(), key.str_.length()) << " " << split.get_ip() << ":" << split.get_port() << " <- " << key.str_;
         } else {
-            LOG_I << "Failed to read data without data";
+            LOG_E << "Failed to read data without data";
 		}
         freeReplyObject(cur_data);
     }
@@ -275,6 +305,14 @@ bool RedisInputFormat::next(RecordT& ref) {
         if_pop_record_ = true;
         return true;
     }
+}
+
+uint16_t RedisInputFormat::gen_slot_crc16(const char *buf, int len) {
+    int counter;
+    uint16_t crc = 0;
+    for (counter = 0; counter < len; counter++)
+        crc = (crc<<8) ^ crc16tab_[((crc>>8) ^ *buf++)&0x00FF];
+    return crc % 16384;
 }
 
 }  // namespace io

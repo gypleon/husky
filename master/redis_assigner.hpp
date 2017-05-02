@@ -56,6 +56,7 @@ public:
     void create_best_keys_pools();
     void create_redis_con_pool();
     void load_keys();    
+    void schedule_keys();
     std::string parse_host(const std::string& hostname);
 
 private:
@@ -66,15 +67,20 @@ private:
     bool need_auth_ = false;
     std::string password_;
 
+    bool if_keys_shuffled_ = false;
+    int batch_epoch_ = 0;
+    std::vector<std::string> all_keys_;
     std::vector<std::string> batch_keys_;
 
     int split_num_;
+    int slots_per_group_;
     std::map<std::string, RedisSplit> splits_;
     std::map<std::string, RedisSplitGroup> split_groups_;
+    std::vector<std::string> sorted_split_group_name_;
     // non-local keys waited to be assigned
-    std::vector<RedisRangeKey> waited_keys_;
+    std::vector<RedisRangeKey> non_local_keys_;
     // local keys pools for certain processes
-    std::vector<std::vector<RedisRangeKey> > proc_keys_pools_;
+    std::vector<std::map<std::string, std::vector<RedisRangeKey> > > proc_keys_pools_;
     int num_proc_keys_;
 
     // keys have been fetched 

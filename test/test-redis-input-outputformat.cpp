@@ -26,37 +26,37 @@
 #include "io/input/inputformat_store.hpp"
 #include "io/output/redis_outputformat.hpp"
 
+#include "hiredis/hiredis.h"
+#include "boost/property_tree/ptree.hpp"
+#include "boost/property_tree/json_parser.hpp"
+
 void test() {
-    std::string server = husky::Context::get_param("mongo_server");
-    std::string db = husky::Context::get_param("mongo_db");
-    std::string collection = husky::Context::get_param("mongo_collection");
-    // std::string user = husky::Context::get_param("mongo_user");
-    // std::string pwd = husky::Context::get_param("mongo_pwd");
-
-    auto& inputformat = husky::io::InputFormatStore::create_mongodb_inputformat();
-    inputformat.set_server(server);
-    inputformat.set_ns(db, collection);
-    // inputformat.set_auth(user, pwd);
-
+    auto& inputformat = husky::io::InputFormatStore::create_redis_inputformat();
 
     husky::io::RedisOutputFormat outputformat;
     outputformat.set_server();
     // outputformat.set_auth(pwd);
 
-    mongo::BSONElement fields[5];
-    auto read_and_write = [&](std::string& chunk) {
-        mongo::BSONObj o = mongo::fromjson(chunk);
-        // parse data
-        const char * field_names[] = {"title", "url", "content", "id", "md5"};
-        o.getFields(5, field_names, fields);
+    auto read_and_write = [&](husky::io::RedisInputFormat::RecordT& record_pair) {
 
-        // commit string
-        std::string key = fields[4].toString(false, true);
-        std::string str_data = fields[2].toString(false, true);
-        // remove '"' on both ends
-        key = key.substr(1, key.size()-2);
-        str_data = str_data.substr(1, str_data.size()-2);
-        outputformat.commit(key, str_data);
+        namespace pt = boost::property_tree;
+        pt::ptree reader;
+        std::stringstream jsonstream;
+        std::string datatype = record_pair.first;
+        jsonstream << record_pair.second;
+
+        std::string key;
+        std::string str_data;
+
+        if ("string" == datatype) {
+            pt::read_json(jsonstream, reader);
+            for ( auto& kv : reader ) {
+                key = kv.first;
+                str_data = kv.second.get_value<std::string>();
+                // husky::LOG_I << key;// << " <=== " << str_data;
+            }
+        }
+        // outputformat.commit(key, str_data);
 
         // commit map
         // std::string key = fields[4].toString(false, true);
@@ -74,19 +74,11 @@ void test() {
         // vec_data.push_back(fields[1].toString(false, true));
         // vec_data.push_back(fields[2].toString(false, true));
         // vec_data.push_back(fields[3].toString(false, true));
-
-        // // remove '"' on both ends
-        // key = key.substr(1, key.size()-2);
-        // // husky::LOG_I << key;
-        // for ( auto& field : vec_data ) {
-        //     field = field.substr(1, field.size()-2);
-        //     // husky::LOG_I << "|" << field;
-        // }
         // outputformat.commit(key, vec_data);
     };
 
     husky::load(inputformat, read_and_write);
-    outputformat.flush_all();
+    // outputformat.flush_all();
 
     husky::LOG_I << "Done";
 }

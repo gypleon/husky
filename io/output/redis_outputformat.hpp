@@ -23,6 +23,7 @@
 #include <utility>
 
 #include "hiredis/hiredis.h"
+#include "hiredis/adapters/libevent.h"
 
 #include "io/output/outputformat_base.hpp"
 #include "io/input/redis_split.hpp"
@@ -58,7 +59,7 @@ private:
         String
     } InnerDataType;
 public:
-    RedisOutputFormat(int number_clients = 10, int flush_buffer_size = 10240);
+    RedisOutputFormat(int number_clients = 10, int flush_buffer_size = 102400);
     ~RedisOutputFormat();
     virtual bool is_setup() const;
 
@@ -68,13 +69,15 @@ public:
     void create_redis_con_pool();
 
     bool commit(const std::string& key, const std::string& result_string);
+    // TODO: 
+    bool commit(const std::string& key, const std::vector<std::string>& result_list);
     template <class DataT>
     bool commit(const std::string& key, const std::vector<DataT>& result_list);
     template <class DataT>
     bool commit(const std::string& key, const std::map<std::string, DataT>& result_hash);
-    void flush_all();
+    int flush_all();
     template <class DataT>
-    char get_template_type(DataT sample);
+    int get_template_type(DataT sample);
     uint16_t gen_slot_crc16(const char *buf, int len);
     std::string parse_host(const std::string& hostname);
 
@@ -83,6 +86,7 @@ protected:
     std::string password_;
     // mixed-type data waited to be flushed
     std::map<std::string, std::pair<DataType, std::string> > records_map_;
+    // std::map<std::string, std::string> records_map_;
     // for Redis
     struct timeval timeout_ = { 1, 500000};
     int records_bytes_ = 0;
