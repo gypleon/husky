@@ -51,7 +51,7 @@ namespace husky {
 
 static RedisSplitAssigner redis_split_assigner;
 
-RedisSplitAssigner::RedisSplitAssigner() : end_count_(0), split_num_(0), num_proc_keys_(0), num_workers_assigned_(0), key_split_threshold_(0), num_batch_load_(100000), num_max_answer_(10000), is_file_imported_(false), is_pattern_imported_(false), is_dynamic_imported_(false) {
+RedisSplitAssigner::RedisSplitAssigner() : end_count_(0), split_num_(0), num_proc_keys_(0), num_workers_assigned_(0), key_split_threshold_(0), num_batch_load_(30000), num_max_answer_(30000), is_file_imported_(false), is_pattern_imported_(false), is_dynamic_imported_(false) {
     Master::get_instance().register_main_handler(TYPE_REDIS_REQ,
                                                  std::bind(&RedisSplitAssigner::master_redis_req_handler, this));
     Master::get_instance().register_main_handler(TYPE_REDIS_END_REQ,
@@ -75,7 +75,7 @@ void RedisSplitAssigner::master_redis_req_handler() {
         answer_masters_info(redis_masters_info); 
         stream << redis_masters_info;
     } else {
-        if ( !is_dynamic_imported_ || !is_pattern_imported_ || !is_file_imported_ ) {
+        if ( !is_dynamic_imported_ || !is_pattern_imported_ || !all_keys_.empty() || !is_file_imported_ ) {
             // load a batch of keys
             load_keys();
             // schedule this batch
@@ -87,7 +87,6 @@ void RedisSplitAssigner::master_redis_req_handler() {
         // deliver keys to a worker
         RedisBestKeys ret = answer_tid_best_keys(global_tid);
         /* TODO: test
-        */
         for ( auto& split_keys : ret.get_keys() ) {
             RedisSplit split = split_keys.first;
             std::vector<RedisRangeKey> keys = split_keys.second;
@@ -95,6 +94,7 @@ void RedisSplitAssigner::master_redis_req_handler() {
                 LOG_I << split.get_ip() << ":" << split.get_port() << " <- " << gen_slot_crc16(key.str_.c_str(), key.str_.length()) << " " << key.str_;
             }
         }
+        */
         stream << ret;
     }
 
@@ -501,7 +501,7 @@ void RedisSplitAssigner::load_keys(){
         }
     }
     // TODO: careful with std::move
-    if ( all_keys_.size() > 0 ) {
+    if ( !all_keys_.empty() ) {
         int current_batch_size = batch_keys_.size(); 
         int load_size = all_keys_.size() < num_batch_load_ ? all_keys_.size() : num_batch_load_;
         for ( int i=0; i < load_size; i++) {
@@ -614,29 +614,32 @@ void RedisSplitAssigner::schedule_keys() {
     }
 
     /* TODO: to be deprecated
+    */
     // even process key pools
     int avg_amount = num_proc_keys_ / proc_keys_pools_.size() + 1;
-    std::vector<int> proc_num_diffs;
+    // std::vector<int> proc_num_diffs;
     int diff = 0;
-    std::vector<RedisRangeKey> waited_to_balance;
     for ( int i=0; i<proc_keys_pools_.size(); i++ ) {
-        if ( (diff = proc_keys_pools_[i].second.size() - avg_amount) > 0 ) {
-            for ( int j=0; j<diff; j++ ) {
-                waited_to_balance.push_back( proc_keys_pools_[i].second.back() );
-                proc_keys_pools_[i].second.pop_back();
+        int num_this_proc_keys = 0;
+        int num_this_proc_pools = proc_keys_pools_[i].size();
+        for ( auto& split : proc_keys_pools_[i] ) {
+            num_this_proc_keys += split.second.size();
+        }
+        if ( (diff = num_this_proc_keys - avg_amount) > 0 ) {
+            for ( auto& split : proc_keys_pools_[i] ){
+                int num_to_balance = split.second.size() * 1000 / num_this_proc_keys * diff / 1000;
+                for ( int j=0; j<num_to_balance; j++ ) {
+                    non_local_keys_.push_back( split.second.back() );
+                    split.second.pop_back();
+                }
             }
         }
-        proc_num_diffs.push_back( proc_keys_pools_[i].second.size() - avg_amount );
-    }
-    while ( !waited_to_balance.empty() ) {
-        non_local_keys_.push_back( waited_to_balance.back() );
-        waited_to_balance.pop_back();
+        // proc_num_diffs.push_back( proc_keys_pools_[i].second.size() - avg_amount );
     }
 
     if (reply) {
         freeReplyObject(reply);
     }
-    */
 }
 
 }  // namespace husky

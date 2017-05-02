@@ -56,7 +56,7 @@ void test() {
                 // husky::LOG_I << key;// << " <=== " << str_data;
             }
         }
-        // outputformat.commit(key, str_data);
+        outputformat.commit(key, str_data);
 
         // commit map
         // std::string key = fields[4].toString(false, true);
@@ -78,7 +78,7 @@ void test() {
     };
 
     husky::load(inputformat, read_and_write);
-    // outputformat.flush_all();
+    outputformat.flush_all();
 
     husky::LOG_I << "Done";
 }
