@@ -62,6 +62,12 @@ target_link_libraries(TestRedisOutputFormat ${husky})
 target_link_libraries(TestRedisOutputFormat ${HUSKY_EXTERNAL_LIB})
 husky_default_properties(TestRedisOutputFormat)
 
+# TestRedisInputOutputFormat
+add_executable(TestRedisInputOutputFormat test-redis-input-outputformat.cpp)
+target_link_libraries(TestRedisInputOutputFormat ${husky})
+target_link_libraries(TestRedisInputOutputFormat ${HUSKY_EXTERNAL_LIB})
+husky_default_properties(TestRedisInputOutputFormat)
+
 # TestMemoryChecker
 add_executable(TestMemoryChecker test-memory-checker.cpp)
 target_link_libraries(TestMemoryChecker ${husky})

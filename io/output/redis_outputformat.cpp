@@ -17,6 +17,7 @@
 #include <sys/param.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <thread>
 
 #include "io/output/redis_outputformat.hpp"
 
@@ -99,7 +100,9 @@ void RedisOutputFormat::create_redis_con_pool() {
         std::string proc_ip = parse_host(get_hostname());
         redisContext * c = NULL;
         if ( !split.second.get_ip().compare(proc_ip) ) {
-            c = redisConnectUnixWithTimeout("/tmp/redis.sock", timeout_);
+            std::string sock_file_path = "/tmp/redis_";
+            sock_file_path += std::to_string(split.second.get_port()) + ".sock";
+            c = redisConnectUnixWithTimeout(sock_file_path.c_str(), timeout_);
         } else {
             c = redisConnectWithTimeout( split.second.get_ip().c_str(), split.second.get_port(), timeout_);
         }
@@ -143,6 +146,30 @@ bool RedisOutputFormat::commit(const std::string& key, const std::string& result
     }
 }
 
+bool RedisOutputFormat::commit(const std::string& key, const std::vector<std::string>& result_list) {
+    if (!is_setup())
+        return false;
+    if (result_list.empty())
+        return false;
+
+    RedisOutputFormat::DataType data_type = RedisOutputFormat::DataType::RedisList;
+    BinStream result_stream;
+    int inner_data_type = get_template_type(result_list[0]);
+    result_stream << inner_data_type;
+    result_stream << result_list;
+    const std::string result_stream_buffer = result_stream.to_string();
+    std::pair<DataType, std::string> result_type_buffer(data_type, result_stream_buffer);
+
+    records_map_[key] = result_type_buffer;
+    records_bytes_ += result_stream_buffer.length();
+
+    if (records_bytes_ >= flush_buffer_size_)
+    {
+        flush_all();
+        return true;
+    }
+}
+
 template <class DataT>
 bool RedisOutputFormat::commit(const std::string& key, const std::vector<DataT>& result_list) {
     if (!is_setup())
@@ -152,7 +179,7 @@ bool RedisOutputFormat::commit(const std::string& key, const std::vector<DataT>&
 
     RedisOutputFormat::DataType data_type = RedisOutputFormat::DataType::RedisList;
     BinStream result_stream;
-    char inner_data_type = get_template_type(result_list[0]);
+    int inner_data_type = get_template_type(result_list[0]);
     result_stream << inner_data_type;
     result_stream << result_list;
     const std::string result_stream_buffer = result_stream.to_string();
@@ -177,7 +204,7 @@ bool RedisOutputFormat::commit(const std::string& key, const std::map<std::strin
 
     RedisOutputFormat::DataType data_type = RedisOutputFormat::DataType::RedisHash;
     BinStream result_stream;
-    char inner_data_type = get_template_type(result_hash.begin().second);
+    int inner_data_type = get_template_type(result_hash.begin().second);
     result_stream << inner_data_type;
     result_stream << result_hash;
     const std::string result_stream_buffer = result_stream.to_string();
@@ -193,15 +220,18 @@ bool RedisOutputFormat::commit(const std::string& key, const std::map<std::strin
     }
 }
 
-void RedisOutputFormat::flush_all() {
+int RedisOutputFormat::flush_all() {
+    // TODO: test
+    int buffer_size = records_bytes_;
+
     if (records_map_.empty())
-        return;
+        return -1;
 
     redisContext * c = NULL;
     int * c_count = 0;
     redisReply *reply = NULL;
 
-    for ( auto& record : records_map_){
+    for ( auto& record : records_map_) {
         std::string key = record.first;
         RedisOutputFormat::DataType data_type = record.second.first;
         BinStream result_stream;
@@ -212,7 +242,7 @@ void RedisOutputFormat::flush_all() {
             if (target_slot >= redis_master.second.get_sstart() && target_slot <= redis_master.second.get_send()) {
                 c = cons_[redis_master.second.get_id()].first;
                 c_count = &cons_[redis_master.second.get_id()].second;
-                // husky::LOG_I << redis_master.second.get_ip();
+                // LOG_I << redis_master.second.get_ip();
                 break;
             }
         }
@@ -221,18 +251,16 @@ void RedisOutputFormat::flush_all() {
             case RedisOutputFormat::DataType::RedisString:
                 {
                     const std::string& result_string = record.second.second;
-                    // husky::LOG_I << key << ", " << result_string;
-                    // redisCmd(c, "SET %b %b", key.c_str(), (size_t) key.length(), result_string.c_str(), (size_t) result_string.length());
-                    // husky::LOG_I << "reply" ;
-
                     redisAppendCommand(c, "SET %b %b", key.c_str(), (size_t) key.length(), result_string.c_str(), (size_t) result_string.length());
                     ++(*c_count);
                 }
                 break;
             case RedisOutputFormat::DataType::RedisList:
                 {
-                    char inner_data_type = RedisOutputFormat::InnerDataType::Other;
+                    int inner_data_type = RedisOutputFormat::InnerDataType::Other;
                     result_stream >> inner_data_type;
+                    // TODO: hard coded for test
+                    inner_data_type = RedisOutputFormat::InnerDataType::String;
                     switch (inner_data_type) {
                         case RedisOutputFormat::InnerDataType::Char:
                             {
@@ -297,7 +325,7 @@ void RedisOutputFormat::flush_all() {
                 break;
             case RedisOutputFormat::DataType::RedisHash:
                 {
-                    char inner_data_type = RedisOutputFormat::InnerDataType::Other;
+                    int inner_data_type = RedisOutputFormat::InnerDataType::Other;
                     result_stream >> inner_data_type;
                     switch (inner_data_type) {
                         case RedisOutputFormat::InnerDataType::Char:
@@ -373,6 +401,7 @@ void RedisOutputFormat::flush_all() {
         }
     }
 
+
     for ( auto& con : cons_ ) {
         while ( con.second.second-- > 0 ) {
             int r = redisGetReply(con.second.first, (void **) &reply );
@@ -385,12 +414,13 @@ void RedisOutputFormat::flush_all() {
                 LOG_E << "NULL REPLY"; 
             } else if ( reply->type == REDIS_REPLY_ERROR ) { 
                 LOG_E << "REDIS_REPLY_ERROR -> " << reply->str; 
-                LOG_I << "pipeline remained -> " << con.second.second;
+                LOG_E << "pipeline remained -> " << con.second.second;
                 ask_masters_info();
             }
         }
         con.second.second = con.second.second < 0 ? 0 : con.second.second;
     }
+
 
     if (reply) {
         freeReplyObject(reply);
@@ -399,6 +429,8 @@ void RedisOutputFormat::flush_all() {
 
     records_map_.clear();
     records_bytes_ = 0;
+    
+    return buffer_size;
 }
 
 uint16_t RedisOutputFormat::gen_slot_crc16(const char *buf, int len) {
@@ -409,8 +441,8 @@ uint16_t RedisOutputFormat::gen_slot_crc16(const char *buf, int len) {
     return crc % 16384;
 }
 
-template<class DataT>
-char RedisOutputFormat::get_template_type(DataT sample) {
+template <class DataT>
+int RedisOutputFormat::get_template_type(DataT sample) {
     const char * sample_type = typeid(sample).name();
     char test_char;
     short int test_short;

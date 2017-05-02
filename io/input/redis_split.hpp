@@ -116,6 +116,7 @@ class RedisSplitGroup {
         // Set / Add
         void add_member(std::string split_id);
         void update_priority();
+        void sort_members();
 
         // Get
         const std::vector<std::string>& get_members() { return members_; }

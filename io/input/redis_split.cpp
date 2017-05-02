@@ -100,6 +100,31 @@ void RedisSplitGroup::update_priority() {
     }
 }
 
+void RedisSplitGroup::sort_members() {
+    sorted_members_.clear();
+    /* TODO: to be deprecated
+    int cur_priority = members_.size();
+    while ( cur_priority > 0 ) {
+        for ( auto& member : members_ ) {
+            if ( get_priority(member) == cur_priority-1 ) {
+                sorted_members_.insert(sorted_members_.begin(), member);
+                cur_priority--;
+            }
+        }
+    }
+    */ 
+    int lowest_priority = members_.size();
+    for ( int higher_priority = 0; higher_priority < lowest_priority; higher_priority++ ) {
+        for ( auto& member : members_ ) {
+            if ( get_priority(member) == higher_priority ) {
+                sorted_members_.push_back(member);
+                // no identical priority
+                break;
+            }
+        }
+    }
+}
+
 int RedisSplitGroup::get_priority(std::string member_id, bool if_balance) { 
     int priority = priority_[member_id];
     if ( if_balance) {
@@ -114,16 +139,6 @@ int RedisSplitGroup::get_num_members() {
 }
 
 const std::vector<std::string>& RedisSplitGroup::get_sorted_members() {
-    sorted_members_.clear();
-    int cur_priority = members_.size();
-    while ( cur_priority > 0 ) {
-        for ( auto& member : members_ ) {
-            if ( get_priority(member) == cur_priority-1 ) {
-                sorted_members_.insert(sorted_members_.begin(), member);
-                cur_priority--;
-            }
-        }
-    }
     return sorted_members_;
 }
 
