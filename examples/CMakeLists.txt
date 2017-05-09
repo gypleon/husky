@@ -121,8 +121,9 @@ target_link_libraries(AMAT ${husky})
 target_link_libraries(AMAT ${HUSKY_EXTERNAL_LIB})
 husky_default_properties(AMAT)
     
-# PageRankRedis
-add_executable(PageRankRedis pagerank_redis.cpp)
-target_link_libraries(PageRankRedis ${husky})
-target_link_libraries(PageRankRedis ${EXTERNAL_LIB})
-set_property(TARGET PageRankRedis PROPERTY CXX_STANDARD 14)
+# TF-IDF-Redis
+add_executable(TF-IDF-Redis tfidf_redis.cpp)
+target_link_libraries(TF-IDF-Redis ${husky})
+target_link_libraries(TF-IDF-Redis ${EXTERNAL_LIB})
+# set_property(TARGET PageRankRedis PROPERTY CXX_STANDARD 14)
+husky_default_properties(TF-IDF-Redis)

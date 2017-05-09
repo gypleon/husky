@@ -70,7 +70,9 @@ void RedisSplitAssigner::master_redis_req_handler() {
     WorkerInfo work_info = Context::get_worker_info();
     stream.clear();
     if ( work_info.get_largest_tid() < global_tid ) {
+        /* TODO: dynamically refresh
         refresh_splits_info();
+        */
         std::map<std::string, RedisSplit> redis_masters_info; 
         answer_masters_info(redis_masters_info); 
         stream << redis_masters_info;
@@ -250,6 +252,7 @@ bool RedisSplitAssigner::refresh_splits_info() {
     }
 
     // sort split_groups for efficient query
+    sorted_split_group_name_.clear();
     for ( auto& split_group : split_groups_ ) {
         sorted_split_group_name_.push_back(split_group.first);
     }
@@ -257,7 +260,13 @@ bool RedisSplitAssigner::refresh_splits_info() {
             [&](std::string& a, std::string& b){
             return splits_[a].get_sstart() < splits_[b].get_sstart();
             });
-    slots_per_group_ = float(16384) / split_groups_.size();
+    slots_per_group_ = 16384 / split_groups_.size();
+    /* TODO: test log 
+    LOG_I << slots_per_group_;
+    for ( int i=0; i<sorted_split_group_name_.size(); i++ ) {
+        LOG_I << sorted_split_group_name_[i];
+    }
+    */
 
     if (reply) {
         freeReplyObject(reply);
@@ -508,7 +517,7 @@ void RedisSplitAssigner::load_keys(){
             batch_keys_.push_back(all_keys_.back());
             all_keys_.pop_back();
         }
-        LOG_I << "[" << batch_keys_.size() << "] in batch pool, [" << batch_keys_.size() - current_batch_size << "] inserted";
+        // LOG_I << "[" << batch_keys_.size() << "] in batch pool, [" << batch_keys_.size() - current_batch_size << "] inserted";
     }
 
     // load keys from file
@@ -556,6 +565,38 @@ void RedisSplitAssigner::schedule_keys() {
         bool is_locally_assigned = false;
         uint16_t slot = gen_slot_crc16(key.c_str(), key.length());
 
+        int split_group_id = slot / slots_per_group_;
+        split_group_id = split_group_id > sorted_split_group_name_.size()-1 ? --split_group_id : split_group_id;
+        // LOG_I << key << " " << slot << " <- guess: " << split_group_id << " " << sorted_split_group_name_[split_group_id];
+        if ( slot < splits_[sorted_split_group_name_[split_group_id]].get_sstart() ) {
+            split_group_id--;
+        } else if ( slot > splits_[sorted_split_group_name_[split_group_id]].get_send() ) {
+            split_group_id++;
+        }
+        // LOG_I << "modified: " << split_group_id << " " << sorted_split_group_name_[split_group_id];
+        RedisSplitGroup& split_group = split_groups_[sorted_split_group_name_[split_group_id]];
+        split_group.sort_members();
+        for ( auto& candidate_id : split_group.get_sorted_members()) {
+            bool is_chosen = false;
+            for (int proc_id = 0; proc_id < num_procs; proc_id++){
+                std::string proc_host = work_info.get_hostname(proc_id);
+                if (!(parse_host(proc_host)).compare(splits_[candidate_id].get_ip())){
+                    proc_keys_pools_[proc_id][candidate_id].push_back(range_key);
+                    num_proc_keys_++;
+                    is_locally_assigned = true;
+                    is_chosen = true;
+                    // if turn on master-slaves load balance
+                    if ( true )
+                        split_group.update_priority();
+                    break;
+                }
+            }
+            if ( is_chosen )
+                break;
+        }
+        RedisSplit master = splits_[sorted_split_group_name_[split_group_id]];
+
+        /* TODO: fast locating
         RedisSplit master;
         for (auto& split_group : split_groups_){
             master = splits_[split_group.first];
@@ -584,6 +625,7 @@ void RedisSplitAssigner::schedule_keys() {
                 break;
             }
         }
+        */
 
         // non-local-served key (rarely have this kind of keys)
         if (!is_locally_assigned) {
@@ -613,8 +655,6 @@ void RedisSplitAssigner::schedule_keys() {
         }
     }
 
-    /* TODO: to be deprecated
-    */
     // even process key pools
     int avg_amount = num_proc_keys_ / proc_keys_pools_.size() + 1;
     // std::vector<int> proc_num_diffs;

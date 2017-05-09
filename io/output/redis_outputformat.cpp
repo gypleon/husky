@@ -103,6 +103,9 @@ void RedisOutputFormat::create_redis_con_pool() {
             std::string sock_file_path = "/tmp/redis_";
             sock_file_path += std::to_string(split.second.get_port()) + ".sock";
             c = redisConnectUnixWithTimeout(sock_file_path.c_str(), timeout_);
+            /* TODO
+            c = redisConnectWithTimeout( split.second.get_ip().c_str(), split.second.get_port(), timeout_);
+            */
         } else {
             c = redisConnectWithTimeout( split.second.get_ip().c_str(), split.second.get_port(), timeout_);
         }
@@ -251,6 +254,8 @@ int RedisOutputFormat::flush_all() {
             case RedisOutputFormat::DataType::RedisString:
                 {
                     const std::string& result_string = record.second.second;
+                    // TODO
+                    // redisCmd(c, "SET %b %b", key.c_str(), (size_t) key.length(), result_string.c_str(), (size_t) result_string.length());
                     redisAppendCommand(c, "SET %b %b", key.c_str(), (size_t) key.length(), result_string.c_str(), (size_t) result_string.length());
                     ++(*c_count);
                 }
@@ -402,6 +407,8 @@ int RedisOutputFormat::flush_all() {
     }
 
 
+    /* TODO
+    */
     for ( auto& con : cons_ ) {
         while ( con.second.second-- > 0 ) {
             int r = redisGetReply(con.second.first, (void **) &reply );

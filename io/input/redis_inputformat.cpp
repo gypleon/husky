@@ -120,6 +120,9 @@ void RedisInputFormat::fetch_split_records(const RedisSplit& split, const std::v
             std::string sock_file_path = "/tmp/redis_";
             sock_file_path += std::to_string(split.get_port()) + ".sock";
             c = redisConnectUnixWithTimeout(sock_file_path.c_str(), timeout_);
+            /* TODO
+            c = redisConnectWithTimeout(split.get_ip().c_str(), split.get_port(), timeout_);
+            */ 
         } else {
             c = redisConnectWithTimeout(split.get_ip().c_str(), split.get_port(), timeout_);
         }
