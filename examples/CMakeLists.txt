@@ -132,3 +132,9 @@ add_executable(NN_MNIST nn_mnist.cpp)
 target_link_libraries(NN_MNIST ${husky})
 target_link_libraries(NN_MNIST ${HUSKY_EXTERNAL_LIB})
 husky_default_properties(NN_MNIST)
+    
+# PageRankRedis
+add_executable(PageRankRedis pagerank_redis.cpp)
+target_link_libraries(PageRankRedis ${husky})
+target_link_libraries(PageRankRedis ${EXTERNAL_LIB})
+set_property(TARGET PageRankRedis PROPERTY CXX_STANDARD 14)
