@@ -84,7 +84,7 @@ void test() {
 }
 
 int main(int argc, char** argv) {
-    ASSERT_MSG(husky::init_with_args(argc, argv, {"mongo_server", "mongo_db", "mongo_collection"}), "Wrong arguments!");
+    husky::ASSERT_MSG(husky::init_with_args(argc, argv, {"mongo_server", "mongo_db", "mongo_collection"}), "Wrong arguments!");
     husky::run_job(test);
     return 0;
 }

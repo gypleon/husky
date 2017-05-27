@@ -39,7 +39,8 @@ if(MONGOCLIENT_FOUND)
 endif(MONGOCLIENT_FOUND)
 
 if(REDISCLIENT_FOUND)
-    list(APPEND input_cpps redis_split.cpp redis_inputformat.cpp)
+    file(GLOB io-input-redis-src-files redis_split.cpp redis_inputformat.cpp)
+    list(APPEND io-input-src-files ${io-input-redis-src-files})
 endif(REDISCLIENT_FOUND)
 
 if(THRIFT_FOUND)
