@@ -51,21 +51,23 @@ void test() {
         o.getFields(5, field_names, fields);
 
         // commit string
-        std::string key = fields[4].toString(false, true);
-        std::string str_data = fields[2].toString(false, true);
-        // remove '"' on both ends
-        key = key.substr(1, key.size()-2);
-        str_data = str_data.substr(1, str_data.size()-2);
-        outputformat.commit(key, str_data);
+        // std::string key = fields[4].toString(false, true);
+        // std::string str_data = fields[2].toString(false, true);
+        // // remove '"' on both ends
+        // key = key.substr(1, key.size()-2);
+        // str_data = str_data.substr(1, str_data.size()-2);
+        // outputformat.commit(key, str_data);
 
         // commit map
-        // std::string key = fields[4].toString(false, true);
-        // std::map<std::string, std::string> map_data;
-        // map_data["title"] = fields[0].toString(false, true);
-        // map_data["url"] = fields[1].toString(false, true);
-        // map_data["content"] = fields[2].toString(false, true);
-        // map_data["id"] = fields[3].toString(false, true);
-        // outputformat.commit(key, map_data);
+        std::string key = fields[0].toString(false, true);
+        // remove '"' on both ends
+        key = key.substr(1, key.size()-2);
+        std::map<std::string, std::string> map_data;
+        for ( int i=1; i<5; i++) {
+            map_data[field_names[i]] = fields[i].toString(false, true);
+            // str_data = str_data.substr(1, str_data.size()-2);
+        }
+        outputformat.commit(key, map_data);
 
         // commit vector
         // std::string key = fields[4].toString(false, true);

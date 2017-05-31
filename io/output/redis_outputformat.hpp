@@ -70,7 +70,7 @@ public:
 
     bool commit(const std::string& key, const std::string& result_string);
     // TODO: 
-    bool commit(const std::string& key, const std::vector<std::string>& result_list);
+    // bool commit(const std::string& key, const std::vector<std::string>& result_list);
     template <class DataT>
     bool commit(const std::string& key, const std::vector<DataT>& result_list);
     template <class DataT>
@@ -131,6 +131,77 @@ protected:
         0x6e17,0x7e36,0x4e55,0x5e74,0x2e93,0x3eb2,0x0ed1,0x1ef0
     };
 };
+
+// commit template implementation
+bool RedisOutputFormat::commit(const std::string& key, const std::string& result_string) {
+    if (!is_setup())
+        return false;
+    if (result_string.empty())
+        return false;
+
+    const RedisOutputFormat::DataType data_type = RedisOutputFormat::DataType::RedisString;
+    std::pair<DataType, std::string> result_type_buffer(data_type, result_string);
+
+    records_map_[key] = result_type_buffer;
+    records_bytes_ += result_string.length();
+
+    if (records_bytes_ >= flush_buffer_size_)
+    {
+        flush_all();
+        return true;
+    }
+}
+
+template <class DataT>
+bool RedisOutputFormat::commit(const std::string& key, const std::vector<DataT>& result_list) {
+    if (!is_setup())
+        return false;
+    if (result_list.empty())
+        return false;
+
+    RedisOutputFormat::DataType data_type = RedisOutputFormat::DataType::RedisList;
+    BinStream result_stream;
+    int inner_data_type = get_template_type(result_list[0]);
+    result_stream << inner_data_type;
+    result_stream << result_list;
+    const std::string result_stream_buffer = result_stream.to_string();
+    std::pair<DataType, std::string> result_type_buffer(data_type, result_stream_buffer);
+
+    records_map_[key] = result_type_buffer;
+    records_bytes_ += result_stream_buffer.length();
+
+    if (records_bytes_ >= flush_buffer_size_)
+    {
+        flush_all();
+        return true;
+    }
+}
+
+template <class DataT>
+bool RedisOutputFormat::commit(const std::string& key, const std::map<std::string, DataT>& result_hash) {
+    if (!is_setup())
+        return false;
+    if (result_hash.empty())
+        return false;
+
+    RedisOutputFormat::DataType data_type = RedisOutputFormat::DataType::RedisHash;
+    BinStream result_stream;
+    int inner_data_type = get_template_type(result_hash.begin().second);
+    result_stream << inner_data_type;
+    result_stream << result_hash;
+    const std::string result_stream_buffer = result_stream.to_string();
+    std::pair<DataType, std::string> result_type_buffer(data_type, result_stream_buffer);
+
+    records_map_[key] = result_type_buffer;
+    records_bytes_ += result_stream_buffer.length();
+
+    if (records_bytes_ >= flush_buffer_size_)
+    {
+        flush_all();
+        return true;
+    }
+}
+
 
 }  // namespace io
 }  // namespace husky
