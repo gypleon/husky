@@ -68,16 +68,16 @@ public:
     void ask_masters_info();
     void create_redis_con_pool();
 
-    bool commit(const std::string& key, const std::string& result_string);
     // TODO: 
     // bool commit(const std::string& key, const std::vector<std::string>& result_list);
+    inline bool commit(const std::string& key, const std::string& result_string);
     template <class DataT>
-    bool commit(const std::string& key, const std::vector<DataT>& result_list);
+    inline bool commit(const std::string& key, const std::vector<DataT>& result_list);
     template <class DataT>
-    bool commit(const std::string& key, const std::map<std::string, DataT>& result_hash);
+    inline bool commit(const std::string& key, const std::map<std::string, DataT>& result_hash);
+    template <class DataT>
+    inline int get_template_type(DataT sample);
     int flush_all();
-    template <class DataT>
-    int get_template_type(DataT sample);
     uint16_t gen_slot_crc16(const char *buf, int len);
     std::string parse_host(const std::string& hostname);
 
@@ -186,7 +186,7 @@ bool RedisOutputFormat::commit(const std::string& key, const std::map<std::strin
 
     RedisOutputFormat::DataType data_type = RedisOutputFormat::DataType::RedisHash;
     BinStream result_stream;
-    int inner_data_type = get_template_type(result_hash.begin().second);
+    int inner_data_type = get_template_type(result_hash.begin()->second);
     result_stream << inner_data_type;
     result_stream << result_hash;
     const std::string result_stream_buffer = result_stream.to_string();
@@ -202,6 +202,37 @@ bool RedisOutputFormat::commit(const std::string& key, const std::map<std::strin
     }
 }
 
+template <class DataT>
+int RedisOutputFormat::get_template_type(DataT sample) {
+    const char * sample_type = typeid(sample).name();
+    char test_char;
+    short int test_short;
+    int test_int;
+    long int test_long;
+    bool test_bool;
+    float test_float;
+    double test_double;
+    std::string test_string;
+    if (!strcmp(typeid(test_string).name(), sample_type)) {
+        return RedisOutputFormat::InnerDataType::String;
+    } else if (!strcmp(typeid(test_short).name(), sample_type)) {
+        return RedisOutputFormat::InnerDataType::Short;
+    } else if (!strcmp(typeid(test_int).name(), sample_type)) {
+        return RedisOutputFormat::InnerDataType::Int;
+    } else if (!strcmp(typeid(test_long).name(), sample_type)) {
+        return RedisOutputFormat::InnerDataType::Long;
+    } else if (!strcmp(typeid(test_bool).name(), sample_type)) {
+        return RedisOutputFormat::InnerDataType::Bool;
+    } else if (!strcmp(typeid(test_float).name(), sample_type)) {
+        return RedisOutputFormat::InnerDataType::Float;
+    } else if (!strcmp(typeid(test_double).name(), sample_type)) {
+        return RedisOutputFormat::InnerDataType::Double;
+    } else if (!strcmp(typeid(test_char).name(), sample_type)) {
+        return RedisOutputFormat::InnerDataType::Char;
+    } else {
+        return RedisOutputFormat::InnerDataType::Other;
+    }
+}
 
 }  // namespace io
 }  // namespace husky

@@ -381,37 +381,5 @@ uint16_t RedisOutputFormat::gen_slot_crc16(const char *buf, int len) {
     return crc % 16384;
 }
 
-template <class DataT>
-int RedisOutputFormat::get_template_type(DataT sample) {
-    const char * sample_type = typeid(sample).name();
-    char test_char;
-    short int test_short;
-    int test_int;
-    long int test_long;
-    bool test_bool;
-    float test_float;
-    double test_double;
-    std::string test_string;
-    if (!strcmp(typeid(test_string).name(), sample_type)) {
-        return RedisOutputFormat::InnerDataType::String;
-    } else if (!strcmp(typeid(test_short).name(), sample_type)) {
-        return RedisOutputFormat::InnerDataType::Short;
-    } else if (!strcmp(typeid(test_int).name(), sample_type)) {
-        return RedisOutputFormat::InnerDataType::Int;
-    } else if (!strcmp(typeid(test_long).name(), sample_type)) {
-        return RedisOutputFormat::InnerDataType::Long;
-    } else if (!strcmp(typeid(test_bool).name(), sample_type)) {
-        return RedisOutputFormat::InnerDataType::Bool;
-    } else if (!strcmp(typeid(test_float).name(), sample_type)) {
-        return RedisOutputFormat::InnerDataType::Float;
-    } else if (!strcmp(typeid(test_double).name(), sample_type)) {
-        return RedisOutputFormat::InnerDataType::Double;
-    } else if (!strcmp(typeid(test_char).name(), sample_type)) {
-        return RedisOutputFormat::InnerDataType::Char;
-    } else {
-        return RedisOutputFormat::InnerDataType::Other;
-    }
-}
-
 }  // namespace io
 }  // namespace husky
