@@ -80,7 +80,6 @@ class RedisSplit {
         // '-' - master, id - slave
         std::string master_;
         int port_;
-        // TODO: slaves slave should also have slots info for load balance
         int slots_start_;
         int slots_end_;
 };

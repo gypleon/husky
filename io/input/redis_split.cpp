@@ -113,6 +113,7 @@ void RedisSplitGroup::sort_members() {
         }
     }
     */ 
+    // TODO: sort members_ directly
     int lowest_priority = members_.size();
     for ( int higher_priority = 0; higher_priority < lowest_priority; higher_priority++ ) {
         for ( auto& member : members_ ) {
