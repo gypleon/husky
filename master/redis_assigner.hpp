@@ -55,6 +55,7 @@ public:
     void create_husky_info();
     void create_split_proc_map();
     void create_redis_con_pool();
+    void create_first_batch();
 
     RedisBestKeys answer_tid_best_keys(int global_tid);
     void answer_masters_info(std::map<std::string, RedisSplit>& redis_masters_info);
@@ -92,26 +93,25 @@ private:
     std::map<std::string, RedisSplitGroup> split_groups_;
     std::vector<std::string> sorted_split_group_name_;
     // non-local keys waited to be assigned
-    std::vector<RedisRangeKey> non_local_served_keys_;
+    std::map<std::string, std::vector<RedisRangeKey> > non_local_served_keys_;
     // keys pools for certain processes
     KEYS_POOLS proc_keys_pools_;
     KEYS_POOLS worker_keys_pools_;
     std::vector<std::vector<int> > proc_keys_stat_;
     std::map<std::string, int> split_proc_map_;
     std::vector<std::vector<int> > proc_worker_map_;
-    int num_local_served_keys_ = 0;
+    int num_non_local_served_keys_ = 0;
 
     // keys have been fetched 
     std::vector<RedisRangeKey> fetched_keys_;
     // num of keys have been fetched, splitted heavy keys will be counted repeatedly
-    int end_count_;
-    int num_workers_assigned_;
+    int fetched_count_ = 0;
+    int num_workers_assigned_ = 0;
 
     int key_split_size_ = 0;
 
     std::map<std::string, redisContext *> cons_;
     int batch_size_;
-    int num_max_answer_;
     // keys from file
     std::string keys_path_;
     std::ifstream keys_file_;
@@ -133,6 +133,8 @@ private:
     int non_local_served_latency_ = 200;
     std::map<std::string, std::vector<int> > keys_latency_map_;
     std::vector<unsigned long> procs_load_;
+
+    unsigned seed_;
 
     const uint16_t crc16tab_[256]= {
         0x0000,0x1021,0x2042,0x3063,0x4084,0x50a5,0x60c6,0x70e7,
