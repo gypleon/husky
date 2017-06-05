@@ -75,15 +75,12 @@ void RedisOutputFormat::set_auth(const std::string& password) {
 bool RedisOutputFormat::is_setup() const { return !(is_setup_ ^ RedisOutputFormatSetUp::AllSetUp); }
 
 void RedisOutputFormat::ask_masters_info() {
-    WorkerInfo worker_info = husky::Context::get_worker_info();
-    int request_code = worker_info.get_largest_tid() + REQ_REDIS_MASTERS_INFO;
     BinStream question;
-    question << request_code;
-    BinStream answer = husky::Context::get_coordinator()->ask_master(question, husky::TYPE_REDIS_REQ);
+    BinStream answer = husky::Context::get_coordinator()->ask_master(question, husky::TYPE_REDIS_QRY_REQ);
     answer >> splits_;
 }
 
-std::string RedisOutputFormat::parse_host(const std::string& hostname){
+std::string RedisOutputFormat::parse_host(const std::string& hostname) {
     hostent * record = gethostbyname(hostname.c_str());
     if(record == NULL){
         LOG_E << "Hostname parse failed:" << hostname;

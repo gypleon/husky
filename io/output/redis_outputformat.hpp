@@ -32,7 +32,6 @@
 #include "core/constants.hpp"
 #include "base/serialization.hpp"
 
-#define REQ_REDIS_MASTERS_INFO 666
 #define redisCmd(context, ...) static_cast<redisReply*>(redisCommand(context, __VA_ARGS__))
 
 namespace husky {

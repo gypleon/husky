@@ -92,7 +92,7 @@ bool RedisInputFormat::ask_best_keys() {
     }
 }
 
-std::string RedisInputFormat::parse_host(const std::string& hostname){
+std::string RedisInputFormat::parse_host(const std::string& hostname) {
     hostent * record = gethostbyname(hostname.c_str());
     if(record == NULL){
         LOG_E << "Hostname parse failed: " << hostname;
@@ -104,7 +104,7 @@ std::string RedisInputFormat::parse_host(const std::string& hostname){
 }
 
 // connect Redis split to retrieve RECORDS
-void RedisInputFormat::fetch_split_records(const RedisSplit& split, const std::vector<RedisRangeKey>& keys){
+void RedisInputFormat::fetch_split_records(const RedisSplit& split, const std::vector<RedisRangeKey>& keys) {
 
     if (!split.is_valid()) {
         LOG_E << "Redis split invalid: " << split.get_id();
@@ -112,11 +112,11 @@ void RedisInputFormat::fetch_split_records(const RedisSplit& split, const std::v
     }
 
     redisContext * c = NULL;
-    if ( cons_.end() != cons_.find(split.get_id()) ) {
+    if (cons_.end() != cons_.find(split.get_id())) {
         c = cons_[split.get_id()];
     } else {
         std::string proc_ip = parse_host(get_hostname());
-        if ( !split.get_ip().compare(proc_ip) ) {
+        if (!split.get_ip().compare(proc_ip)) {
             std::string sock_file_path = "/tmp/redis_";
             sock_file_path += std::to_string(split.get_port()) + ".sock";
             c = redisConnectUnixWithTimeout(sock_file_path.c_str(), timeout_);
@@ -145,7 +145,7 @@ void RedisInputFormat::fetch_split_records(const RedisSplit& split, const std::v
     }
 
     // slave read-only, master-slaves load balance
-    if ( split.get_master().compare("-") ) {
+    if (split.get_master().compare("-")) {
         redisReply * reply;
         reply = redisCmd(c, "READONLY");
         if ( strcmp(reply->str, "OK") ) {

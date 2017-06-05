@@ -37,18 +37,23 @@ using io::RedisRangeKey;
 
 class RedisSplitAssigner {
 public:
+    // [proc_id/worker_id][local, non_local]{split_id : [keys]}
+    typedef std::vector<std::vector<std::map<std::string, std::vector<RedisRangeKey> > > > KEYS_POOLS;
+
+public:
     RedisSplitAssigner();
     void master_redis_req_handler();
+    void master_redis_qry_req_handler();
     void master_redis_req_end_handler();
     void master_setup_handler();
     virtual ~RedisSplitAssigner();
     void set_auth(const std::string&);
     void reset_auth();
 
-    bool cache_splits_info();
+    bool create_redis_info();
     bool refresh_splits_info();
-    void create_local_device_map();
-    void create_best_keys_pools();
+    void create_husky_info();
+    void create_split_proc_map();
     void create_redis_con_pool();
 
     RedisBestKeys answer_tid_best_keys(int global_tid);
@@ -57,7 +62,7 @@ public:
  
     void load_keys();    
     void schedule_keys();
-    int reduce_max_workload();
+    unsigned long reduce_max_workload(KEYS_POOLS& proc_new_keys_pools, bool& if_need_more_keys);
 
     std::string parse_host(const std::string& hostname);
     uint16_t gen_slot_crc16(const char *buf, int len);
@@ -78,19 +83,22 @@ private:
     std::vector<std::string>::iterator move_start_;
     std::vector<std::string>::iterator move_end_;
 
+    WorkerInfo work_info_;
+    int num_procs_;
+    int num_workers_;
+
     int num_slots_per_group_;
     std::map<std::string, RedisSplit> splits_;
     std::map<std::string, RedisSplitGroup> split_groups_;
     std::vector<std::string> sorted_split_group_name_;
     // non-local keys waited to be assigned
     std::vector<RedisRangeKey> non_local_served_keys_;
-    // local keys pools for certain processes
-    // [proc_id][local, non_local]{split_id : [keys]}
-    std::vector<std::vector<std::map<std::string, std::vector<RedisRangeKey> > > > proc_keys_pools_;
-    // TODO: deprecated
-    // std::vector<std::map<std::string, std::vector<RedisRangeKey> > > proc_keys_pools_;
-    std::map<std::string, int> split_proc_map_;
+    // keys pools for certain processes
+    KEYS_POOLS proc_keys_pools_;
+    KEYS_POOLS worker_keys_pools_;
     std::vector<std::vector<int> > proc_keys_stat_;
+    std::map<std::string, int> split_proc_map_;
+    std::vector<std::vector<int> > proc_worker_map_;
     int num_local_served_keys_ = 0;
 
     // keys have been fetched 
@@ -107,21 +115,24 @@ private:
     // keys from file
     std::string keys_path_;
     std::ifstream keys_file_;
-    bool is_file_imported_;
+    bool is_file_imported_ = false;
     int cur_pos_ = 0;
     // keys from pattern
-    bool is_pattern_imported_;
+    bool is_pattern_imported_ = false;
+    bool is_pattern_delivered_ = false;
     std::string keys_pattern_;
     // keys from Redis List
-    bool is_dynamic_imported_;
+    bool is_dynamic_imported_ = false;
     std::string keys_list_;
+    RedisSplit keys_list_master_;
+    bool if_found_keys_list_ = false;
     int cur_start_ = 0;
+
     // workload balance optimization, in microseconds 
     int local_served_latency_ = 100;
     int non_local_served_latency_ = 200;
     std::map<std::string, std::vector<int> > keys_latency_map_;
     std::vector<unsigned long> procs_load_;
-    int num_procs_;
 
     const uint16_t crc16tab_[256]= {
         0x0000,0x1021,0x2042,0x3063,0x4084,0x50a5,0x60c6,0x70e7,
