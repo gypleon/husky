@@ -21,6 +21,8 @@
 #include <vector>
 #include <sys/time.h>
 #include <fstream>
+#include <mutex>
+#include <thread>
 
 #include "core/context.hpp"
 #include "hiredis/hiredis.h"
@@ -37,25 +39,27 @@ using io::RedisRangeKey;
 
 class RedisSplitAssigner {
 public:
+    RedisSplitAssigner();
+    virtual ~RedisSplitAssigner();
+    void set_auth(const std::string&);
+    void reset_auth();
+
+private:
     // [proc_id/worker_id][local, non_local]{split_id : [keys]}
     typedef std::vector<std::vector<std::map<std::string, std::vector<RedisRangeKey> > > > KEYS_POOLS;
 
-public:
-    RedisSplitAssigner();
+private:
     void master_redis_req_handler();
     void master_redis_qry_req_handler();
     void master_redis_req_end_handler();
     void master_setup_handler();
-    virtual ~RedisSplitAssigner();
-    void set_auth(const std::string&);
-    void reset_auth();
 
     bool create_redis_info();
     bool refresh_splits_info();
     void create_husky_info();
     void create_split_proc_map();
     void create_redis_con_pool();
-    void create_first_batch();
+    void create_schedule_thread();
 
     RedisBestKeys answer_tid_best_keys(int global_tid);
     void answer_masters_info(std::map<std::string, RedisSplit>& redis_masters_info);
@@ -63,19 +67,15 @@ public:
  
     void load_keys();    
     void schedule_keys();
-    unsigned long reduce_max_workload(KEYS_POOLS& proc_new_keys_pools, bool& if_need_more_keys);
+    void load_schedule();
+
+    unsigned long reduce_max_workload(KEYS_POOLS& proc_new_keys_pools, std::vector<unsigned long>& workers_load);
 
     std::string parse_host(const std::string& hostname);
     uint16_t gen_slot_crc16(const char *buf, int len);
 
 private:
-    std::string ip_;
-    int port_;
-    struct timeval timeout_ = { 1, 500000};
-
-    bool need_auth_ = false;
-    std::string password_;
-
+    // batch
     bool if_keys_shuffled_ = false;
     std::vector<std::string> all_keys_;
     std::vector<std::string> batch_keys_;
@@ -83,44 +83,40 @@ private:
     int num_keys_delivered_ = 0;
     std::vector<std::string>::iterator move_start_;
     std::vector<std::string>::iterator move_end_;
+    int batch_size_;
 
+    // husky cluster info
     WorkerInfo work_info_;
     int num_procs_;
     int num_workers_;
+    std::vector<std::vector<int> > proc_worker_map_;
 
+    // local keys assignment
     int num_slots_per_group_;
     std::map<std::string, RedisSplit> splits_;
     std::map<std::string, RedisSplitGroup> split_groups_;
     std::vector<std::string> sorted_split_group_name_;
-    // non-local keys waited to be assigned
+
+    // non-local/heavy keys assignment
     std::map<std::string, std::vector<RedisRangeKey> > non_local_served_keys_;
-    // keys pools for certain processes
-    KEYS_POOLS proc_keys_pools_;
-    KEYS_POOLS worker_keys_pools_;
-    std::vector<std::vector<int> > proc_keys_stat_;
-    std::map<std::string, int> split_proc_map_;
-    std::vector<std::vector<int> > proc_worker_map_;
+    int key_split_size_ = 0;
     int num_non_local_served_keys_ = 0;
 
     // keys have been fetched 
     std::vector<RedisRangeKey> fetched_keys_;
-    // num of keys have been fetched, splitted heavy keys will be counted repeatedly
     int fetched_count_ = 0;
-    int num_workers_assigned_ = 0;
 
-    int key_split_size_ = 0;
-
-    std::map<std::string, redisContext *> cons_;
-    int batch_size_;
     // keys from file
     std::string keys_path_;
     std::ifstream keys_file_;
     bool is_file_imported_ = false;
     int cur_pos_ = 0;
+
     // keys from pattern
     bool is_pattern_imported_ = false;
     bool is_pattern_delivered_ = false;
     std::string keys_pattern_;
+
     // keys from Redis List
     bool is_dynamic_imported_ = false;
     std::string keys_list_;
@@ -133,7 +129,21 @@ private:
     int non_local_served_latency_ = 200;
     std::map<std::string, std::vector<int> > keys_latency_map_;
     std::vector<unsigned long> procs_load_;
+    std::vector<std::vector<int> > proc_keys_stat_;
+    std::map<std::string, int> split_proc_map_;
 
+    // worker-level task assignment
+    KEYS_POOLS worker_keys_pools_;
+    std::mutex worker_pools_mutex_;
+    std::thread scheduler_;
+
+    // miscellaneous
+    std::string ip_;
+    int port_;
+    struct timeval timeout_ = { 1, 500000};
+    bool need_auth_ = false;
+    std::string password_;
+    std::map<std::string, redisContext *> cons_;
     unsigned seed_;
 
     const uint16_t crc16tab_[256]= {

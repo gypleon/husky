@@ -25,15 +25,6 @@
 #include <algorithm>
 #include <random>
 #include <iterator>
-#include <math.h> // round
-
-#include "hiredis/hiredis.h"
-#include "boost/tokenizer.hpp"
-
-#include "core/constants.hpp"
-#include "core/zmq_helpers.hpp"
-#include "core/context.hpp"
-#include "master/master.hpp"
 
 #include <netdb.h>
 #include <sys/param.h>
@@ -44,13 +35,21 @@
 #include <ctime>
 #include <chrono>
 
+#include "hiredis/hiredis.h"
+#include "boost/tokenizer.hpp"
+
+#include "core/constants.hpp"
+#include "core/zmq_helpers.hpp"
+#include "core/context.hpp"
+#include "master/master.hpp"
+
 #define CHECK(X) if ( !X || X->type == REDIS_REPLY_ERROR ) { LOG_E << "Error"; exit(-1); }
 
 namespace husky {
 
 static RedisSplitAssigner redis_split_assigner;
 
-RedisSplitAssigner::RedisSplitAssigner() : batch_size_(100000) {
+RedisSplitAssigner::RedisSplitAssigner() : batch_size_(50000) {
     Master::get_instance().register_main_handler(TYPE_REDIS_REQ,
                                                  std::bind(&RedisSplitAssigner::master_redis_req_handler, this));
     Master::get_instance().register_main_handler(TYPE_REDIS_QRY_REQ,
@@ -90,23 +89,6 @@ void RedisSplitAssigner::master_redis_req_handler() {
 
     // deliver keys to the incoming worker
     RedisBestKeys ret = answer_tid_best_keys(global_tid);
-
-    bool if_load = false;
-    do {
-        for (int worker_id=0; worker_id<num_workers_; worker_id++) {
-            if (worker_keys_pools_[worker_id].size() < batch_size_ / num_workers_) {
-                if_load = true;
-                break;
-            }
-        }
-        if (if_load && (!is_dynamic_imported_ || !is_pattern_delivered_ || !is_file_imported_)) {
-            load_keys();
-            std::chrono::time_point<std::chrono::system_clock> start = std::chrono::system_clock::now();
-            schedule_keys();
-            std::chrono::duration<double> interval = std::chrono::system_clock::now() - start;
-            LOG_I << "schedule time: " + std::to_string(interval.count());
-        }
-    } while (if_load && (!is_dynamic_imported_ || !is_pattern_delivered_ || !is_file_imported_)); 
 
     /* TODO: test
     for ( auto& split_keys : ret.get_keys() ) {
@@ -151,6 +133,8 @@ void RedisSplitAssigner::master_setup_handler() {
     keys_list_ = Context::get_param("redis_keys_list").c_str(); 
     local_served_latency_ = atoi(Context::get_param("redis_local_latency").c_str()); 
     non_local_served_latency_ = atoi(Context::get_param("redis_non_local_latency").c_str()); 
+    batch_size_ = atoi(Context::get_param("redis_batch_size").c_str()); 
+
     seed_ = std::chrono::system_clock::now().time_since_epoch().count();
     srand(seed_);
 
@@ -158,15 +142,7 @@ void RedisSplitAssigner::master_setup_handler() {
     create_husky_info();
     create_split_proc_map();
     create_redis_con_pool();
-    create_first_batch();
-}
-
-void RedisSplitAssigner::create_first_batch() {
-    load_keys();
-    std::chrono::time_point<std::chrono::system_clock> start = std::chrono::system_clock::now();
-    schedule_keys();
-    std::chrono::duration<double> interval = std::chrono::system_clock::now() - start;
-    LOG_I << "schedule time: " + std::to_string(interval.count());
+    create_schedule_thread();
 }
 
 RedisSplitAssigner::~RedisSplitAssigner() {
@@ -176,7 +152,6 @@ RedisSplitAssigner::~RedisSplitAssigner() {
     all_keys_.clear();
     batch_keys_.clear();
     non_local_served_keys_.clear();
-    proc_keys_pools_.clear();
     worker_keys_pools_.clear();
     fetched_keys_.clear();
 
@@ -196,6 +171,8 @@ RedisSplitAssigner::~RedisSplitAssigner() {
         }
     }
     cons_.clear();
+
+    scheduler_.join();
 }
 
 void RedisSplitAssigner::set_auth(const std::string& password) {
@@ -330,12 +307,16 @@ bool RedisSplitAssigner::create_redis_info() {
 
 RedisBestKeys RedisSplitAssigner::answer_tid_best_keys(int global_tid) {
     RedisBestKeys ret;
+    int num_answer_once = batch_size_ / num_workers_;
+    int num_answered = 0;
+    std::lock_guard<std::mutex> pools_lock(worker_pools_mutex_);
     for (int key_type=0; key_type<2; key_type++) {
         for (auto& split_keys : worker_keys_pools_[global_tid][key_type]) {
             int num_keys = split_keys.second.size();
             for (int i=0; i<num_keys; i++) {
                 ret.add_key(splits_[split_keys.first], split_keys.second.back());
                 split_keys.second.pop_back();
+                if (++num_answered >= num_answer_once) return ret;
             }
         }
     }
@@ -395,11 +376,6 @@ void RedisSplitAssigner::create_husky_info() {
     num_procs_ = work_info_.get_num_processes(); 
     num_workers_ = work_info_.get_num_workers(); 
     for (int proc_id=0; proc_id<num_procs_; proc_id++) {
-        // create process-level keys pools
-        std::map<std::string, std::vector<RedisRangeKey> > local_keys_pool;
-        std::map<std::string, std::vector<RedisRangeKey> > non_local_keys_pool;
-        std::vector<std::map<std::string, std::vector<RedisRangeKey> > > best_keys_pool{local_keys_pool, non_local_keys_pool};
-        proc_keys_pools_.push_back(best_keys_pool);
         // initialize process-level keys statistics
         std::vector<int> keys_stat{0, 0};
         proc_keys_stat_.push_back(keys_stat);
@@ -447,6 +423,36 @@ void RedisSplitAssigner::create_redis_con_pool() {
     } 
     if (reply) {
         freeReplyObject(reply);
+    }
+}
+
+void RedisSplitAssigner::create_schedule_thread() {
+    scheduler_ = std::thread(&RedisSplitAssigner::load_schedule, this);
+}
+
+void RedisSplitAssigner::load_schedule() {
+    while (!is_dynamic_imported_ || !is_pattern_delivered_ || !is_file_imported_) {
+        bool if_load = false;
+        for (int worker_id=0; worker_id<num_workers_; worker_id++) {
+            int worker_pool_size = 0;
+            for (int key_type=0; key_type<2; key_type++) {
+                for (auto& split_keys : worker_keys_pools_[worker_id][key_type]) {
+                    worker_pool_size += split_keys.second.size();
+                }
+            }
+            if (worker_pool_size < batch_size_ / num_workers_ * 3) {
+                LOG_I << "worker_" << worker_id << " pool size: " << worker_pool_size;
+                if_load = true;
+                break;
+            }
+        }
+        if (if_load) {
+            load_keys();
+            std::chrono::time_point<std::chrono::system_clock> start = std::chrono::system_clock::now();
+            schedule_keys();
+            std::chrono::duration<double> interval = std::chrono::system_clock::now() - start;
+            LOG_I << "schedule time: " + std::to_string(interval.count());
+        }
     }
 }
 
@@ -513,7 +519,7 @@ void RedisSplitAssigner::load_keys(){
                     std::string key = std::string(reply->element[i]->str);
                     all_keys_.push_back(key);
                 }
-                LOG_I << "[" << i << "] inserted into pool, size [" << all_keys_.size() << "]";
+                // LOG_I << "[" << i << "] inserted into pool, size [" << all_keys_.size() << "]";
             }
             is_pattern_imported_ = true;
             LOG_I << "keys from pattern DONE";
@@ -530,27 +536,31 @@ void RedisSplitAssigner::load_keys(){
         move_start_ = all_keys_.begin();
     }
     // mode 2 (step 2): generate a batch
-    /* TODO: std::move()
-    if ( batch_keys_.size() < batch_size_ && !all_keys_.empty() ) {
-        int load_size = all_keys_.size() < batch_size_ ? all_keys_.size() : batch_size_;
-        for ( int i=0; i < load_size; i++) {
-            batch_keys_.push_back(all_keys_.back());
-            all_keys_.pop_back();
-        }
-    }
-    */
-    if ( batch_keys_.size() < batch_size_ && !is_pattern_delivered_ ) { 
-        if ( num_keys_delivered_ != num_keys_amount_ ) {
-            int remained = move_end_ - move_start_;
-            int load_size =  remained < batch_size_ ? remained : batch_size_;
+    int remained = num_keys_amount_ - num_keys_delivered_;
+    if (batch_keys_.size() < batch_size_ && !is_pattern_delivered_) {
+        if (num_keys_delivered_ != num_keys_amount_) {
+            int load_size = remained < batch_size_ ? remained : batch_size_;
             move_end_ = move_start_ + load_size;
-            std::move( move_start_, move_end_, batch_keys_.end() ); 
+            batch_keys_.insert(batch_keys_.end(), move_start_, move_end_);
             move_start_ = move_end_;
             num_keys_delivered_ += load_size;
         } else {
             is_pattern_delivered_ = true;
         }
     }
+    /* TODO: std::move()
+    if (batch_keys_.size() < batch_size_ && !is_pattern_delivered_) { 
+        if (num_keys_delivered_ != num_keys_amount_) {
+            int load_size = remained < batch_size_ ? remained : batch_size_;
+            move_end_ = move_start_ + load_size;
+            std::move(move_start_, move_end_, batch_keys_.end()); 
+            move_start_ = move_end_;
+            num_keys_delivered_ += load_size;
+        } else {
+            is_pattern_delivered_ = true;
+        }
+    }
+    */
 
     // mode 3: load keys from file, a batch at a time
     std::string raw_key;
@@ -583,24 +593,23 @@ void RedisSplitAssigner::load_keys(){
 
 }
 
-unsigned long RedisSplitAssigner::reduce_max_workload(KEYS_POOLS& proc_new_keys_pools, bool& if_need_more_keys) {
+unsigned long RedisSplitAssigner::reduce_max_workload(KEYS_POOLS& proc_new_keys_pools, std::vector<unsigned long>& workers_load) {
     // update process-level workload
-    std::vector<unsigned long> workers_load_;
     for (int proc_id=0; proc_id<num_procs_; proc_id++) {
         procs_load_[proc_id] = proc_keys_stat_[proc_id][0] * local_served_latency_ + proc_keys_stat_[proc_id][1] * non_local_served_latency_;
         // generate worker-level workload
         for (int worker_id : proc_worker_map_[proc_id]) {
-            workers_load_[worker_id] = procs_load_[proc_id] / proc_worker_map_[proc_id].size();
+            workers_load[worker_id] = procs_load_[proc_id] / proc_worker_map_[proc_id].size();
         }
     }
-    auto minmax_it = std::minmax_element(workers_load_.begin(), workers_load_.end());
-    int max_worker_id = minmax_it.second - workers_load_.begin();
-    int min_worker_id = minmax_it.first - workers_load_.begin();
+    auto minmax_it = std::minmax_element(workers_load.begin(), workers_load.end());
+    int max_worker_id = minmax_it.second - workers_load.begin();
+    int min_worker_id = minmax_it.first - workers_load.begin();
     int max_proc_id = work_info_.get_process_id(max_worker_id);
     int min_proc_id = work_info_.get_process_id(min_worker_id);
     int num_workers_max = proc_worker_map_[max_proc_id].size();
     int num_workers_min = proc_worker_map_[min_proc_id].size();
-    unsigned long max_load = workers_load_[max_worker_id];
+    unsigned long max_load = workers_load[max_worker_id];
     bool if_equal = false;
     // transfer non-local/local workload
     for (int key_type=1; key_type>=0; key_type--) {
@@ -708,22 +717,36 @@ void RedisSplitAssigner::schedule_keys() {
     // step 3: optimize process-level workload
     int reduced_time = 0;
     int consumed_time = 0;
-    int optimize_step = 3;
+    int optimize_step = 1;
+    // float last_optimize_ratio = 0;
     bool if_need_more_keys = false;
     std::chrono::time_point<std::chrono::system_clock> start;
+    std::vector<unsigned long> workers_load;
+    for (int worker_id=0; worker_id<num_workers_; worker_id++) {
+        workers_load.push_back(0);
+    }
     while (true) {
         start = std::chrono::system_clock::now();
         reduced_time = 0;
         for (int i=0; i<optimize_step; i++) {
-            reduced_time += reduce_max_workload(proc_new_keys_pools, if_need_more_keys);
+            reduced_time += reduce_max_workload(proc_new_keys_pools, workers_load);
         }
         std::chrono::duration<double, std::micro> interval = std::chrono::system_clock::now() - start;
         consumed_time = int(interval.count());
-        if (reduced_time <= consumed_time) break;
+        // LOG_I << "schedule, step 3, optimize consumed time:" << consumed_time << ", reduced time:" << reduced_time;
+        if (/*float(consumed_time) / reduced_time == last_optimize_ratio ||*/ reduced_time <= consumed_time) break;
+        // last_optimize_ratio = float(consumed_time) / reduced_time;
     }
 
     // step 4: distribute local-served keys to workers
-    int rnd_offset;
+    std::lock_guard<std::mutex> pools_lock(worker_pools_mutex_);
+    std::vector<std::vector<int> > worker_keys_stat;
+    for (int worker_id; worker_id<num_workers_; worker_id++) {
+        std::vector<int> keys_stat{0, 0};
+        worker_keys_stat.push_back(keys_stat);
+    }
+    int worker_id = 0;
+    int rnd_offset = 0;
     for (int proc_id=0; proc_id<num_procs_; proc_id++) {
         int num_local_workers = proc_worker_map_[proc_id].size();
         for (int key_type=0; key_type<2; key_type++) {
@@ -731,7 +754,9 @@ void RedisSplitAssigner::schedule_keys() {
                 int num_keys = split_keys.second.size();
                 rnd_offset = rand() % num_local_workers;
                 for (int i=0; i<num_keys; i++) {
-                    worker_keys_pools_[(i+rnd_offset) % num_local_workers][key_type][split_keys.first].push_back(split_keys.second.back());
+                    worker_id = (i + rnd_offset) % num_workers_;
+                    worker_keys_pools_[worker_id][key_type][split_keys.first].push_back(split_keys.second.back());
+                    worker_keys_stat[worker_id][key_type]++;
                     split_keys.second.pop_back();
                 }
             }
@@ -739,15 +764,25 @@ void RedisSplitAssigner::schedule_keys() {
     }
 
     // step 5: distribute non-local-served keys
-    rnd_offset = rand() % num_workers_;
-    int i=0;
+    int i = 0;
     for (auto& split_keys : non_local_served_keys_) {
         int num_keys = split_keys.second.size();
+        rnd_offset = rand() % num_workers_;
         for (int j=0; j<num_keys; j++) {
-            worker_keys_pools_[(i++ + rnd_offset) % num_workers_][1][split_keys.first].push_back(split_keys.second.back()); 
+            worker_id = (i++ + rnd_offset) % num_workers_;
+            worker_keys_pools_[worker_id][1][split_keys.first].push_back(split_keys.second.back()); 
+            worker_keys_stat[worker_id][1]++;
+            proc_keys_stat_[work_info_.get_process_id(worker_id)][1]++;
             split_keys.second.pop_back();
         }
     }
+
+    /* TODO: visualize worker stat
+    for (int worker_id; worker_id<num_workers_; worker_id++) {
+        workers_load[worker_id] = worker_keys_stat[worker_id][0] * local_served_latency_ + worker_keys_stat[worker_id][1] * non_local_served_latency_;
+        LOG_I << "worker_" << worker_id << " load: " << workers_load[worker_id] << ", \tkeys: " << worker_keys_stat[worker_id][0] + worker_keys_stat[worker_id][1] << "[" << float(worker_keys_stat[worker_id][0]) / (worker_keys_stat[worker_id][0]+worker_keys_stat[worker_id][1]) * 100 << "%]";
+    }
+    */
     
     if (reply) {
         freeReplyObject(reply);
