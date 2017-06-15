@@ -50,11 +50,7 @@ enum RedisInputFormatSetUp {
 };
 
 RedisInputFormat::RedisInputFormat() {
-    records_vector_.clear();
-    best_keys_.clear();
-    cons_.clear();
-    // is_setup_ = RedisInputFormatSetUp::NotSetUp;
-    is_setup_ |= RedisInputFormatSetUp::ServerSetUp;
+    is_setup_ = RedisInputFormatSetUp::NotSetUp;
 }
 
 RedisInputFormat::~RedisInputFormat() { 
@@ -64,19 +60,77 @@ RedisInputFormat::~RedisInputFormat() {
         redisFree(con.second);
     }
     cons_.clear();
+    split_i_id_.clear();
 }
 
 bool RedisInputFormat::is_setup() const { 
     return !(is_setup_ ^ RedisInputFormatSetUp::AllSetUp); 
 }
 
-void RedisInputFormat::set_auth(const std::string& password){
-    need_auth_ = true;
-    password_ = password;
+void RedisInputFormat::set_server() {
+    ask_redis_splits_info();
+    create_redis_cons();
+    is_setup_ |= RedisInputFormatSetUp::ServerSetUp;
 }
 
-void RedisInputFormat::reset_auth(){
+void RedisInputFormat::set_auth(const std::string& password) {
+    need_auth_ = true;
+    password_ = password;
+    is_setup_ |= RedisInputFormatSetUp::AuthSetUp;
+}
+
+void RedisInputFormat::reset_auth() {
     need_auth_ = false;
+}
+
+void RedisInputFormat::ask_redis_splits_info() {
+    BinStream question;
+    question << 1;
+    BinStream answer = husky::Context::get_coordinator()->ask_master(question, husky::TYPE_REDIS_QRY_REQ);
+    answer >> splits_;
+
+    split_i_id_.clear();
+    for (int split_i=0; split_i<splits_.size(); split_i++) {
+        split_i_id_.push_back("");
+        for (auto& split : splits_) {
+            if (split.second.get_sn() == split_i) {
+                split_i_id_[split_i] = split.first;
+                break;
+            }
+        }
+    }
+}
+
+void RedisInputFormat::create_redis_cons() {
+    redisReply *reply = NULL;
+    for (auto& split: splits_) {
+        std::string proc_ip = parse_host(get_hostname());
+        redisContext * c = NULL;
+        if (!split.second.get_ip().compare(proc_ip)) {
+            std::string sock_file_path = "/tmp/redis_";
+            sock_file_path += std::to_string(split.second.get_port()) + ".sock";
+            c = redisConnectUnixWithTimeout(sock_file_path.c_str(), timeout_);
+        } else {
+            c = redisConnectWithTimeout(split.second.get_ip().c_str(), split.second.get_port(), timeout_);
+        }
+        if (NULL == c || c->err) {
+            if (c){
+                LOG_E << "Connection error: " + std::string(c->errstr);
+                redisFree(c);
+            } else {
+                LOG_E << "Connection error: can't allocate redis context";
+            }
+            return;
+        }
+        if (need_auth_) {
+            reply = redisCmd(c, "AUTH %s", password_.c_str());
+            CHECK(reply);
+        }
+        cons_[split.second.get_id()] = c;
+    }
+    if (reply) {
+        freeReplyObject(reply);
+    }
 }
 
 // ask master for a set of best keys, with their location 
@@ -84,8 +138,12 @@ bool RedisInputFormat::ask_best_keys() {
     BinStream question;
     question << husky::Context::get_global_tid();
     BinStream answer = husky::Context::get_coordinator()->ask_master(question, husky::TYPE_REDIS_REQ);
+    int if_no_more_keys;
+    answer >> if_no_more_keys;
+    // LOG_I << if_no_more_keys;
     answer >> best_keys_;
-    if ( best_keys_.get_keys().empty() ) {
+
+    if (1==if_no_more_keys) {
         return false;
     } else {
         return true;
@@ -95,7 +153,7 @@ bool RedisInputFormat::ask_best_keys() {
 std::string RedisInputFormat::parse_host(const std::string& hostname) {
     hostent * record = gethostbyname(hostname.c_str());
     if(record == NULL){
-        LOG_E << "Hostname parse failed: " << hostname;
+        LOG_E << "hostname parse failed: " << hostname;
         return "failed";
     }
     in_addr * address = (in_addr * )record->h_addr;
@@ -104,44 +162,15 @@ std::string RedisInputFormat::parse_host(const std::string& hostname) {
 }
 
 // connect Redis split to retrieve RECORDS
-void RedisInputFormat::fetch_split_records(const RedisSplit& split, const std::vector<RedisRangeKey>& keys) {
+void RedisInputFormat::fetch_split_records(int split_i, const std::vector<RedisRangeKey>& keys) {
+
+    std::string split_id = split_i_id_[split_i];
+    RedisSplit split = splits_[split_id];
+    redisContext * c = cons_[split_id];
 
     if (!split.is_valid()) {
         LOG_E << "Redis split invalid: " << split.get_id();
         return;
-    }
-
-    redisContext * c = NULL;
-    if (cons_.end() != cons_.find(split.get_id())) {
-        c = cons_[split.get_id()];
-    } else {
-        std::string proc_ip = parse_host(get_hostname());
-        if (!split.get_ip().compare(proc_ip)) {
-            std::string sock_file_path = "/tmp/redis_";
-            sock_file_path += std::to_string(split.get_port()) + ".sock";
-            c = redisConnectUnixWithTimeout(sock_file_path.c_str(), timeout_);
-            /* TODO
-            c = redisConnectWithTimeout(split.get_ip().c_str(), split.get_port(), timeout_);
-            */ 
-        } else {
-            c = redisConnectWithTimeout(split.get_ip().c_str(), split.get_port(), timeout_);
-        }
-        if (NULL == c || c->err){
-            if (c){
-                LOG_E << "Connection error: " + std::string(c->errstr);
-                redisFree(c);
-            } else {
-                LOG_E << "Connection error: can't allocate redis context";
-            }
-            return;
-        }
-
-        if (need_auth_) {
-            redisReply * reply;
-            reply = redisCmd(c, "AUTH %s", password_.c_str());
-            freeReplyObject(reply);
-        }
-        cons_[split.get_id()] = c;
     }
 
     // slave read-only, master-slaves load balance
@@ -258,56 +287,55 @@ void RedisInputFormat::fetch_split_records(const RedisSplit& split, const std::v
 		}
         freeReplyObject(cur_data);
     }
-
-    return;
 }
 
 // all data have been read
-void RedisInputFormat::send_end(RedisBestKeys& best_keys) {
+void RedisInputFormat::send_end(std::vector<std::vector<RedisRangeKey> >& best_keys) {
     BinStream question;
-    question << best_keys;
+    int num_received_keys = 0;
+    for (auto& split_keys : best_keys) {
+        num_received_keys += split_keys.size();
+    }
+    question << num_received_keys;
     question << husky::Context::get_global_tid();
     husky::Context::get_coordinator()->ask_master(question, husky::TYPE_REDIS_END_REQ);
     return;
 }
 
 bool RedisInputFormat::next(RecordT& ref) {
-    if ( if_pop_record_ ) {
+    if (if_pop_record_) {
         records_vector_.pop_back();
         if_pop_record_ = false;
     }
 
-    if ( records_vector_.empty() ) {
-        if ( best_keys_.get_keys().empty() ) {
-            if ( ask_best_keys() ) {
-                for ( auto& split : best_keys_.get_keys()){ 
-                    fetch_split_records(split.first, split.second);
-                    // TODO: if split invalid
-                }
-                send_end(best_keys_);
-                best_keys_.clear();
-                ref = records_vector_.back();
-                if_pop_record_ = true;
-                return true;
-            } else {
-                return false;
+    bool if_next = true;
+    if (records_vector_.empty()) {
+        if_next = ask_best_keys();
+        bool if_best_keys_empty = true;
+        for (auto& split_keys : best_keys_) {
+            if (!split_keys.empty()) {
+                if_best_keys_empty = false;
+                break;
             }
-        } else {
-            for ( auto& split : best_keys_.get_keys()){ 
-                fetch_split_records(split.first, split.second);
-                // TODO: if split invalid
+        }
+        if (!if_best_keys_empty) {
+            for (int split_i=0; split_i<best_keys_.size(); split_i++) { 
+                if (best_keys_[split_i].empty()) continue;
+                fetch_split_records(split_i, best_keys_[split_i]);
             }
             send_end(best_keys_);
             best_keys_.clear();
             ref = records_vector_.back();
             if_pop_record_ = true;
-            return true;
+        } else {
+            LOG_E << "no keys assigned";
         }
     } else {
         ref = records_vector_.back();
         if_pop_record_ = true;
-        return true;
     }
+
+    return if_next;
 }
 
 uint16_t RedisInputFormat::gen_slot_crc16(const char *buf, int len) {

@@ -28,6 +28,7 @@ RedisSplit::RedisSplit() : is_valid_(false), slots_start_(-1), slots_end_(-1) {}
 
 RedisSplit::RedisSplit(const RedisSplit& other) {
     is_valid_ = other.is_valid_;
+    sn_ = other.sn_;
     id_ = other.id_;
     ip_ = other.ip_;
     master_ = other.master_;
@@ -37,6 +38,7 @@ RedisSplit::RedisSplit(const RedisSplit& other) {
 }
 
 void RedisSplit::set_valid(bool valid) { is_valid_ = valid; }
+void RedisSplit::set_sn(int sn) { sn_ = sn; }
 void RedisSplit::set_id(const std::string& id) { id_ = id; }
 void RedisSplit::set_ip(const std::string& ip) { ip_ = ip; }
 void RedisSplit::set_master(const std::string& master) { master_ = master; }
@@ -146,6 +148,7 @@ const std::vector<std::string>& RedisSplitGroup::get_sorted_members() {
 // BinStream series
 BinStream& operator<<(BinStream& stream, RedisSplit& split) {
     stream << split.is_valid();
+    stream << split.get_sn();
     stream << split.get_id();
     stream << split.get_ip();
     stream << split.get_port();
@@ -159,6 +162,7 @@ BinStream& operator<<(BinStream& stream, RedisSplit& split) {
 // TODO: why RedisSplit changed into const
 BinStream& operator<<(BinStream& stream, const RedisSplit& split) {
     stream << split.is_valid();
+    stream << split.get_sn();
     stream << split.get_id();
     stream << split.get_ip();
     stream << split.get_port();
@@ -170,6 +174,7 @@ BinStream& operator<<(BinStream& stream, const RedisSplit& split) {
 
 BinStream& operator>>(BinStream& stream, RedisSplit& split) {
     bool is_valid;
+    int sn;
     std::string id;
     std::string ip;
     int port;
@@ -177,6 +182,7 @@ BinStream& operator>>(BinStream& stream, RedisSplit& split) {
     int slots_start;
     int slots_end;
     stream >> is_valid;
+    stream >> sn;
     stream >> id;
     stream >> ip;
     stream >> port;
@@ -184,6 +190,7 @@ BinStream& operator>>(BinStream& stream, RedisSplit& split) {
     stream >> slots_start;
     stream >> slots_end;
     split.set_valid(is_valid);
+    split.set_sn(sn);
     split.set_id(id);
     split.set_ip(ip);
     split.set_port(port);
@@ -234,6 +241,10 @@ BinStream& operator<<(BinStream& stream, RedisRangeKey& key) {
     return stream;
 }
 
+BinStream& operator<<(BinStream& stream, const RedisRangeKey& key) {
+    stream << key.str_ << key.start_ << key.end_;
+    return stream;
+}
 BinStream& operator>>(BinStream& stream, RedisRangeKey& key) {
     stream >> key.str_ >> key.start_ >> key.end_;
     return stream;

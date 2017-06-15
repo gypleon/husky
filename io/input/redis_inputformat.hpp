@@ -34,6 +34,7 @@ namespace io {
 class RedisInputFormat final : public InputFormatBase {
 public:
     typedef std::pair<std::string, std::string> RecordT;
+
 public:
     RedisInputFormat();
     virtual ~RedisInputFormat();
@@ -41,32 +42,36 @@ public:
     virtual bool is_setup() const;
     virtual bool next(RecordT& ref);
 
+    void set_server();
     void set_auth(const std::string&);
     void reset_auth();
 
+private:
+    void ask_redis_splits_info();
+    void create_redis_cons();
     bool ask_best_keys();
-    void fetch_split_records(const RedisSplit& split, const std::vector<RedisRangeKey>& keys);
-    void send_end(RedisBestKeys& best_keys);
+    void fetch_split_records(int split_i, const std::vector<RedisRangeKey>& keys);
+    void send_end(std::vector<std::vector<RedisRangeKey> >& best_keys);
 
+    uint16_t gen_slot_crc16(const char *buf, int len);
     std::string parse_host(const std::string& hostname);
 
-protected:
+private:
     std::string ip_;
     int port_;
     struct timeval timeout_ = { 1, 500000};
-
     bool need_auth_ = false;
     std::string password_;
+    std::map<std::string, redisContext *> cons_;
+    std::map<std::string, RedisSplit> splits_;
+    std::vector<std::string> split_i_id_;
 
     int is_setup_ = 0;
 
     std::vector<RecordT> records_vector_;
     bool if_pop_record_ = false;
-    RedisBestKeys best_keys_;
+    std::vector<std::vector<RedisRangeKey> > best_keys_;
 
-    std::map<std::string, redisContext *> cons_;
-
-    uint16_t gen_slot_crc16(const char *buf, int len);
     const uint16_t crc16tab_[256]= {
         0x0000,0x1021,0x2042,0x3063,0x4084,0x50a5,0x60c6,0x70e7,
         0x8108,0x9129,0xa14a,0xb16b,0xc18c,0xd1ad,0xe1ce,0xf1ef,

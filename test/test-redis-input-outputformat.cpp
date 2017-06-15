@@ -32,6 +32,7 @@
 
 void test() {
     auto& inputformat = husky::io::InputFormatStore::create_redis_inputformat();
+    inputformat.set_server();
 
     husky::io::RedisOutputFormat outputformat;
     outputformat.set_server();
@@ -53,7 +54,6 @@ void test() {
             for ( auto& kv : reader ) {
                 key = kv.first;
                 str_data = kv.second.get_value<std::string>();
-                // husky::LOG_I << key;// << " <=== " << str_data;
             }
         }
         outputformat.commit(key, str_data);

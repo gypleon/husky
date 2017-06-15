@@ -57,6 +57,7 @@ private:
         Double,
         String
     } InnerDataType;
+
 public:
     RedisOutputFormat(int number_clients = 10, int flush_buffer_size = 102400);
     ~RedisOutputFormat();
@@ -64,32 +65,35 @@ public:
 
     void set_auth(const std::string& password);
     void set_server();
-    void ask_masters_info();
-    void create_redis_con_pool();
 
-    // TODO: 
-    // bool commit(const std::string& key, const std::vector<std::string>& result_list);
     inline bool commit(const std::string& key, const std::string& result_string);
     template <class DataT>
     inline bool commit(const std::string& key, const std::vector<DataT>& result_list);
     template <class DataT>
     inline bool commit(const std::string& key, const std::map<std::string, DataT>& result_hash);
-    template <class DataT>
-    inline int get_template_type(DataT sample);
     int flush_all();
+
+private:
+    void ask_redis_masters_info();
+    void create_redis_con_pool();
+
     uint16_t gen_slot_crc16(const char *buf, int len);
     std::string parse_host(const std::string& hostname);
+    template <class DataT>
+    inline int get_template_type(DataT sample);
 
-protected:
+private:
+    int num_split_groups_;
+    int num_slots_per_group_;
+    std::vector<std::string> sorted_split_group_name_;
+
     bool need_auth_ = false;
     std::string password_;
     // mixed-type data waited to be flushed
     std::map<std::string, std::pair<DataType, std::string> > records_map_;
-    // std::map<std::string, std::string> records_map_;
     // for Redis
     struct timeval timeout_ = { 1, 500000};
     int records_bytes_ = 0;
-    // TODO: maybe multi-client (connections)
     // number of connections for each redis master
     int number_clients_;
     int flush_buffer_size_;

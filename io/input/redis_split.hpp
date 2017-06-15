@@ -36,6 +36,7 @@ class RedisSplit {
         // Set-functions
         void set_valid(bool valid);
 
+        void set_sn(int sn);
         void set_id(const std::string& id);
         void set_ip(const std::string& ip);
         void set_master(const std::string& master);
@@ -45,6 +46,7 @@ class RedisSplit {
         void set_send(int end);
 
         // Get-functions
+        inline const int get_sn() const { return sn_; }
         inline const std::string& get_id() const { return id_; }
         inline const std::string& get_ip() const { return ip_; }
         inline const std::string& get_master() const { return master_; }
@@ -63,6 +65,7 @@ class RedisSplit {
 
         RedisSplit& operator=(const RedisSplit &other){
             is_valid_ = other.is_valid_;
+            sn_ = other.sn_;
             id_ = other.id_;
             ip_ = other.ip_;
             master_ = other.master_;
@@ -75,6 +78,7 @@ class RedisSplit {
     private:
         bool is_valid_;
 
+        int sn_;
         std::string id_;
         std::string ip_;
         // '-' - master, id - slave
@@ -143,7 +147,7 @@ BinStream& operator>>(BinStream& stream, RedisSplit& split);
 BinStream& operator<<(BinStream& stream, RedisBestKeys& keys);
 BinStream& operator>>(BinStream& stream, RedisBestKeys& keys);
 
-BinStream& operator<<(BinStream& stream, RedisRangeKey& key);
+BinStream& operator<<(BinStream& stream, const RedisRangeKey& key);
 BinStream& operator>>(BinStream& stream, RedisRangeKey& key);
 
 }  // namespace io

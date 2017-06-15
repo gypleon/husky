@@ -45,8 +45,10 @@ public:
     void reset_auth();
 
 private:
-    // [proc_id/worker_id][local, non_local]{split_id : [keys]}
-    typedef std::vector<std::vector<std::map<std::string, std::vector<RedisRangeKey> > > > KEYS_POOLS;
+    // [proc_id][local, non_local]{split_id : [keys]}
+    typedef std::vector<std::vector<std::map<std::string, std::vector<RedisRangeKey> > > > PROC_KEYS_POOLS;
+    // [worker_id]{split_id : [keys]}
+    typedef std::vector<std::vector<std::vector<RedisRangeKey> > > WORKER_KEYS_POOLS;
 
 private:
     void master_redis_req_handler();
@@ -61,29 +63,32 @@ private:
     void create_redis_con_pool();
     void create_schedule_thread();
 
-    RedisBestKeys answer_tid_best_keys(int global_tid);
+    void answer_tid_best_keys(int global_tid, std::vector<std::vector<RedisRangeKey> >& ret);
     void answer_masters_info(std::map<std::string, RedisSplit>& redis_masters_info);
-    void receive_end(RedisBestKeys& best_keys);
+    void answer_splits_info(std::map<std::string, RedisSplit>& redis_splits_info);
+    void receive_end(int global_tid, int num_received_keys);
  
     void load_keys();    
     void schedule_keys();
     void load_schedule();
 
-    unsigned long reduce_max_workload(KEYS_POOLS& proc_new_keys_pools, std::vector<unsigned long>& workers_load);
+    unsigned long reduce_max_workload(PROC_KEYS_POOLS& proc_new_keys_pools, std::vector<unsigned long>& workers_load);
 
     std::string parse_host(const std::string& hostname);
     uint16_t gen_slot_crc16(const char *buf, int len);
 
 private:
-    // batch
-    bool if_keys_shuffled_ = false;
-    std::vector<std::string> all_keys_;
+    // batch / streaming
+    std::vector<std::vector<std::string> > all_keys_;
     std::vector<std::string> batch_keys_;
     int num_keys_amount_ = 0;
     int num_keys_delivered_ = 0;
     std::vector<std::string>::iterator move_start_;
     std::vector<std::string>::iterator move_end_;
     int batch_size_;
+    std::vector<int> worker_no_more_keys_;
+    bool if_no_batch_keys_ = true;
+    bool if_streaming_mode_ = false;
 
     // husky cluster info
     WorkerInfo work_info_;
@@ -100,11 +105,9 @@ private:
     // non-local/heavy keys assignment
     std::map<std::string, std::vector<RedisRangeKey> > non_local_served_keys_;
     int key_split_size_ = 0;
-    int num_non_local_served_keys_ = 0;
 
     // keys have been fetched 
-    std::vector<RedisRangeKey> fetched_keys_;
-    int fetched_count_ = 0;
+    std::vector<int> worker_num_fetched_keys_;
 
     // keys from file
     std::string keys_path_;
@@ -133,7 +136,7 @@ private:
     std::map<std::string, int> split_proc_map_;
 
     // worker-level task assignment
-    KEYS_POOLS worker_keys_pools_;
+    WORKER_KEYS_POOLS worker_keys_pools_;
     std::mutex worker_pools_mutex_;
     std::thread scheduler_;
 
