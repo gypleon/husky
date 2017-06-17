@@ -49,7 +49,7 @@ namespace husky {
 
 static RedisSplitAssigner redis_split_assigner;
 
-RedisSplitAssigner::RedisSplitAssigner() : batch_size_(100) {
+RedisSplitAssigner::RedisSplitAssigner() {
     Master::get_instance().register_main_handler(TYPE_REDIS_REQ,
                                                  std::bind(&RedisSplitAssigner::master_redis_req_handler, this));
     Master::get_instance().register_main_handler(TYPE_REDIS_QRY_REQ,
@@ -121,8 +121,8 @@ void RedisSplitAssigner::master_redis_req_handler() {
         }
     }
     */
-    int no_more = worker_no_more_keys_[global_tid];
-    stream << no_more;
+
+    stream << worker_task_status_[global_tid];
     stream << ret;
 
     zmq_sendmore_string(master_socket.get(), master.get_cur_client());
@@ -140,6 +140,10 @@ void RedisSplitAssigner::master_redis_req_end_handler() {
     stream >> num_received_keys;
     stream >> global_tid;
     receive_end(global_tid, num_received_keys);
+
+    if (if_all_keys_fetched_) {
+        reset_default_states();
+    }
 
     stream.clear();
     zmq_sendmore_string(master_socket.get(), master.get_cur_client());
@@ -165,6 +169,7 @@ void RedisSplitAssigner::master_setup_handler() {
     create_husky_info();
     create_split_proc_map();
     create_redis_con_pool();
+    import_all_pattern_keys();
     create_schedule_thread();
 }
 
@@ -177,18 +182,19 @@ RedisSplitAssigner::~RedisSplitAssigner() {
     non_local_served_keys_.clear();
     worker_keys_pools_.clear();
     worker_num_fetched_keys_.clear();
+    worker_num_keys_assigned_.clear();
 
     split_proc_map_.clear();
     procs_load_.clear();
     keys_latency_map_.clear();
     proc_keys_stat_.clear();
 
-    if ( keys_file_.is_open() ) {
+    if (keys_file_.is_open()) {
         keys_file_.close();
     }
 
     // release Redis connection pool
-    for ( auto& con : cons_ ) {
+    for (auto& con : cons_) {
         if (con.second) {
             redisFree(con.second);
         }
@@ -309,14 +315,54 @@ bool RedisSplitAssigner::refresh_splits_info() {
     if (c) {
         redisFree(c);
     }
+}
 
+void RedisSplitAssigner::reset_default_states() {
+    num_keys_amount_ = 0;
+    num_keys_batched_ = 0;
+    num_keys_scheduled_ = 0;
+    num_keys_fetched_ = 0;
+    cur_start_ = 0;
+    non_local_offset_ = 0;
+
+    is_dynamic_imported_ = false;
+    is_pattern_imported_ = false;
+    is_pattern_batched_ = false;
+    is_file_imported_ = false;
+    if_all_keys_scheduled_ = false;
+    if_all_keys_fetched_ = false;
+
+    refresh_splits_info();
+
+    all_keys_.clear();
+    batch_keys_.clear();
+    non_local_served_keys_.clear();
+    keys_latency_map_.clear();
+
+    procs_load_.clear();
+    proc_keys_stat_.clear();
+    proc_worker_offset_.clear();
+    proc_worker_map_.clear();
+
+    worker_num_keys_assigned_.clear();
+    worker_num_fetched_keys_.clear();
+    worker_task_status_.clear();
+    worker_keys_pools_.clear();
+
+    create_husky_info();
+
+    if (if_scheduler_stopped_) {
+        scheduler_.join();
+        if_scheduler_stopped_ = false;
+        create_schedule_thread();
+    }
 }
 
 bool RedisSplitAssigner::create_redis_info() {
 
     refresh_splits_info();
 
-    for ( auto& split_group : split_groups_ ) {
+    for (auto& split_group : split_groups_) {
         const std::vector<std::string> members = split_group.second.get_members();
         LOG_I << "\033[1;32m====================================================\033[0m";
         LOG_I << "redis group id: " << split_group.first;
@@ -331,25 +377,32 @@ bool RedisSplitAssigner::create_redis_info() {
 
 void RedisSplitAssigner::answer_tid_best_keys(int global_tid, std::vector<std::vector<RedisRangeKey> >& ret) {
     ret.clear();
-    int num_answer_once = batch_size_ / num_workers_;
-    int num_answered = 0;
-    std::lock_guard<std::mutex> pools_lock(worker_pools_mutex_);
+    std::unique_lock<std::mutex> pools_lock(worker_pools_mutex_);
 
-    bool if_stop = false;
-    for (int split_i=0; split_i<splits_.size(); split_i++) {
+    int num_to_be_answered = 0;
+    int num_answered = 0;
+    int num_splits = splits_.size();
+    int num_remained_keys = 0;
+    for (int split_i=0; split_i<num_splits; split_i++) {
+        num_remained_keys += worker_keys_pools_[global_tid][split_i].size();
         std::vector<RedisRangeKey> split_keys;
         ret.push_back(split_keys);
-        int num_keys = worker_keys_pools_[global_tid][split_i].size();
-        for (int i=0; i<num_keys; i++) {
+    }
+    num_to_be_answered = num_remained_keys > 0 && worker_num_keys_assigned_[global_tid].front() <= num_remained_keys ? worker_num_keys_assigned_[global_tid].front() : num_remained_keys;
+    if (num_to_be_answered > num_remained_keys) {
+        LOG_E << "worker_" << global_tid << " " << num_to_be_answered << " " << num_remained_keys;
+    }
+
+    int i = 0;
+    while (num_answered < num_to_be_answered) {
+        int split_i = i++ % num_splits;
+        if (!worker_keys_pools_[global_tid][split_i].empty()) {
             ret[split_i].push_back(worker_keys_pools_[global_tid][split_i].back());
             worker_keys_pools_[global_tid][split_i].pop_back();
-            if (++num_answered >= num_answer_once) {
-                if_stop = true;
-                break;
-            }
+            num_answered++;
         }
-        if (if_stop) break;
     }
+
     bool if_no_worker_keys = true;
     for (auto& split_keys : worker_keys_pools_[global_tid]) {
         if (!split_keys.empty()) {
@@ -357,18 +410,10 @@ void RedisSplitAssigner::answer_tid_best_keys(int global_tid, std::vector<std::v
             break;
         }
     }
-    bool if_no_non_local_keys = true;
-    for (auto& split_keys : non_local_served_keys_) {
-        if (!split_keys.second.empty()) {
-            if_no_non_local_keys = false;
-            break;
-        }
-    }
-    if (if_no_worker_keys && if_no_non_local_keys && batch_keys_.empty() && is_dynamic_imported_ && is_pattern_delivered_ && is_file_imported_) {
-        worker_no_more_keys_[global_tid] = 1;
-        LOG_E << "worker_" << global_tid << " over";
-    } else {
-        LOG_I << "worker_" << global_tid << " no_worker_key:" << if_no_worker_keys << " no_non_local:" << if_no_non_local_keys << " batch_keys:" << batch_keys_.size();
+    if (is_dynamic_imported_ && is_pattern_batched_ && is_file_imported_ && if_all_keys_scheduled_ && if_no_worker_keys) {
+        worker_task_status_[global_tid] = 1;
+    } else if ((!is_dynamic_imported_ || !is_pattern_batched_ || !is_file_imported_ || !if_all_keys_scheduled_) && if_no_worker_keys) {
+        worker_task_status_[global_tid] = 2;
     }
 }
 
@@ -386,7 +431,19 @@ void RedisSplitAssigner::answer_splits_info(std::map<std::string, RedisSplit>& r
 }
 
 void RedisSplitAssigner::receive_end(int global_tid, int num_received_keys) {
+    std::unique_lock<std::mutex> pools_lock(worker_pools_mutex_);
     worker_num_fetched_keys_[global_tid] += num_received_keys;
+    num_keys_fetched_ += num_received_keys;
+    if (worker_num_keys_assigned_[global_tid].front() == num_received_keys) {
+        worker_num_keys_assigned_[global_tid].pop();
+    } else {
+        LOG_E << "end:worker_" << global_tid << "[" << num_received_keys << "/" << worker_num_keys_assigned_[global_tid].front() << "]";
+        worker_num_keys_assigned_[global_tid].pop();
+    }
+    LOG_I << "fetched [" << num_keys_fetched_ << "," << num_keys_scheduled_ << "," << num_keys_batched_ << "/" << num_keys_amount_ << "]";
+    if (num_keys_fetched_ == num_keys_amount_) {
+        if_all_keys_fetched_= true;
+    }
 }
 
 uint16_t RedisSplitAssigner::gen_slot_crc16(const char *buf, int len) {
@@ -409,10 +466,10 @@ std::string RedisSplitAssigner::parse_host(const std::string& hostname) {
 }
 
 void RedisSplitAssigner::create_split_proc_map() {
-    for ( auto& split : splits_ ) {
-        for ( int proc_id=0; proc_id<num_procs_; proc_id++ ) {
+    for (auto& split : splits_) {
+        for (int proc_id=0; proc_id<num_procs_; proc_id++) {
             std::string proc_host = work_info_.get_hostname(proc_id);
-            if ( !(parse_host(proc_host)).compare(split.second.get_ip()) ) {
+            if (!(parse_host(proc_host)).compare(split.second.get_ip())) {
                 split_proc_map_[split.first] = proc_id;
                 break;
             }
@@ -424,7 +481,7 @@ void RedisSplitAssigner::create_husky_info() {
     work_info_ = Context::get_worker_info();
     num_procs_ = work_info_.get_num_processes(); 
     num_workers_ = work_info_.get_num_workers(); 
-    batch_size_ = num_workers_ * 100;
+    batch_size_ = num_workers_ * 10000;
     for (int proc_id=0; proc_id<num_procs_; proc_id++) {
         // initialize process-level keys statistics
         std::vector<int> keys_stat{0, 0};
@@ -438,6 +495,8 @@ void RedisSplitAssigner::create_husky_info() {
             local_workers.push_back(work_info_.local_to_global_id(proc_id, worker_id));
         }
         proc_worker_map_.push_back(local_workers);
+        // initialize process' worker offset
+        proc_worker_offset_.push_back(0);
     }
     for (int worker_id=0; worker_id<num_workers_; worker_id++) {
         // create worker-level keys pools
@@ -449,8 +508,11 @@ void RedisSplitAssigner::create_husky_info() {
         worker_keys_pools_.push_back(best_keys_pool);
         // create worker-level fetched keys statistics
         worker_num_fetched_keys_.push_back(0);
-        // create worker-level stop flag
-        worker_no_more_keys_.push_back(0);
+        // create worker-level task status
+        worker_task_status_.push_back(0);
+        // create worker-level batch keys statistics
+        std::queue<int> worker_num_batch_keys;
+        worker_num_keys_assigned_.push_back(worker_num_batch_keys);
     }
 }
 
@@ -487,29 +549,57 @@ void RedisSplitAssigner::create_schedule_thread() {
 }
 
 void RedisSplitAssigner::load_schedule() {
-    while (!batch_keys_.empty() || !is_dynamic_imported_ || !is_pattern_delivered_ || !is_file_imported_) {
-        int worker_pool_size;
-        int new_worker_pool_size = 0;
-        for (int worker_id=0; worker_id<num_workers_; worker_id++) {
-            worker_pool_size = 0;
-            for (auto& split_keys : worker_keys_pools_[worker_id]) {
-                worker_pool_size += split_keys.size();
-            }
-            if (worker_pool_size < batch_size_ / num_workers_ * 3) {
-                load_keys();
-                schedule_keys();
-                for (auto& split_keys : worker_keys_pools_[worker_id]) {
-                    new_worker_pool_size += split_keys.size();
-                }
-                LOG_I << "worker_" << worker_id << " pool size: " << new_worker_pool_size << "<-" << worker_pool_size;
-                break;
-            }
+    if (if_streaming_mode_) {
+        while (true) {
+            std::unique_lock<std::mutex> pools_lock(worker_pools_mutex_, std::defer_lock);
+            load_batch_keys();
+            schedule_batch_keys(pools_lock.mutex());
         }
+    } else {
+        while (!is_dynamic_imported_ || !is_pattern_batched_ || !is_file_imported_ || !if_all_keys_scheduled_) {
+            std::unique_lock<std::mutex> pools_lock(worker_pools_mutex_, std::defer_lock);
+            load_batch_keys();
+            schedule_batch_keys(pools_lock.mutex());
+        }
+    }
+    if_scheduler_stopped_ = true;
+    LOG_I << "scheduling thread finished.";
+}
+
+void RedisSplitAssigner::import_all_pattern_keys() {
+
+    redisReply *reply = NULL;
+
+    if (keys_pattern_.compare("")) {
+        LOG_I << "keys from pattern [" << keys_pattern_ << "] ...";
+        for ( auto& split_group : split_groups_ ) {
+            RedisSplit master = splits_[split_group.first];
+            reply = redisCmd(cons_[master.get_id()], "KEYS %s", keys_pattern_.c_str());
+            LOG_I << "[" << reply->elements << "] matched on [" << master.get_ip() << ":" << master.get_port() << "]";
+            // no record matches this pattern on this master
+            if ( reply->elements <= 0 )
+                continue;
+            std::vector<std::string> split_all_keys;
+            int i = 0;
+            for ( ; i<reply->elements; i++ ) {
+                std::string key = std::string(reply->element[i]->str);
+                split_all_keys.push_back(key);
+            }
+            all_keys_.push_back(split_all_keys);
+            num_keys_amount_ += split_all_keys.size();
+        }
+        LOG_I << "keys from pattern DONE";
+    }
+
+    is_pattern_imported_ = true;
+
+    if (reply) {
+        freeReplyObject(reply);
     }
 }
 
-// load keys
-void RedisSplitAssigner::load_keys(){
+// load a batch of keys
+void RedisSplitAssigner::load_batch_keys() {
 
     redisReply *reply = NULL;
 
@@ -553,47 +643,28 @@ void RedisSplitAssigner::load_keys(){
         }
     }
 
-    // mode 2 (step 1): load keys according to a pattern, load all keys at once
-    if ( !is_pattern_imported_ ) {
-        if ( keys_pattern_.compare("") ) {
-            LOG_I << "keys from pattern [" << keys_pattern_ << "] ...";
-            for ( auto& split_group : split_groups_ ) {
-                RedisSplit master = splits_[split_group.first];
-                reply = redisCmd(cons_[master.get_id()], "KEYS %s", keys_pattern_.c_str());
-                LOG_I << "[" << reply->elements << "] matched on [" << master.get_ip() << ":" << master.get_port() << "]";
-                // no record matches this pattern on this master
-                if ( reply->elements <= 0 )
-                    continue;
-                std::vector<std::string> split_all_keys;
-                int i = 0;
-                for ( ; i<reply->elements; i++ ) {
-                    std::string key = std::string(reply->element[i]->str);
-                    split_all_keys.push_back(key);
-                }
-                all_keys_.push_back(split_all_keys);
-                num_keys_amount_ += split_all_keys.size();
-            }
-            LOG_I << "keys from pattern DONE";
-        }
-        is_pattern_imported_ = true;
+    // mode 2 (step 1): load keys from pattern, load all keys at once
+    if (!is_pattern_imported_) {
+        import_all_pattern_keys();
     }
-    // mode 2 (step 2): generate a batch
-    int remained = num_keys_amount_ - num_keys_delivered_;
-    if (batch_keys_.size() < batch_size_ && !is_pattern_delivered_) {
-        if (num_keys_delivered_ != num_keys_amount_) {
-            int load_size = remained < batch_size_ ? remained : batch_size_;
+    // mode 2 (step 2): load keys from pattern, generate a batch
+    int num_remained = num_keys_amount_ - num_keys_batched_;
+    if (!is_pattern_batched_) {
+        if (num_keys_batched_ != num_keys_amount_) {
+            int load_size = num_remained < batch_size_ ? num_remained : batch_size_;
+            int num_loaded = 0;
             int i = 0;
-            while (i<load_size) {
-                std::vector<std::string>& split_all_keys = all_keys_[i % all_keys_.size()];
+            while (num_loaded < load_size) {
+                std::vector<std::string>& split_all_keys = all_keys_[i++ % all_keys_.size()];
                 if (!split_all_keys.empty()) {
                     batch_keys_.push_back(split_all_keys.back());
                     split_all_keys.pop_back();
-                    i++;
+                    num_loaded++;
                 }
             }
-            num_keys_delivered_ += load_size;
+            num_keys_batched_ += load_size;
         } else {
-            is_pattern_delivered_ = true;
+            is_pattern_batched_= true;
         }
     }
 
@@ -675,7 +746,7 @@ unsigned long RedisSplitAssigner::reduce_max_workload(PROC_KEYS_POOLS& proc_new_
     return max_load - procs_load_[max_proc_id]/num_workers_max;
 }
 
-void RedisSplitAssigner::schedule_keys() {
+void RedisSplitAssigner::schedule_batch_keys(std::mutex * pools_lock) {
     redisReply *reply = NULL;
 
     // step 1: initialize incoming keys pools
@@ -691,7 +762,6 @@ void RedisSplitAssigner::schedule_keys() {
     for (auto& key : batch_keys_) {
         RedisRangeKey range_key;
         range_key.str_ = key;
-        bool is_locally_assigned = false;
         uint16_t slot = gen_slot_crc16(key.c_str(), key.length());
 
         int split_group_id = slot / num_slots_per_group_;
@@ -713,11 +783,8 @@ void RedisSplitAssigner::schedule_keys() {
             proc_new_keys_pools[proc_id][0][selected_split_id].push_back(range_key);
             proc_keys_stat_[proc_id][0]++;
             keys_latency_map_[key][proc_id] = local_served_latency_;
-            is_locally_assigned = true;
-        }
-
-        // retain non-local-served keys (this kind of keys rarely exist)
-        if (!is_locally_assigned) {
+        } else {
+            // retain non-local-served keys (this kind of keys rarely exist)
             if (key_split_size_) {
                 RedisSplit master = splits_[sorted_split_group_name_[split_group_id]];
                 reply = redisCmd(cons_[master.get_id()], "TYPE %s", key.c_str());
@@ -763,44 +830,53 @@ void RedisSplitAssigner::schedule_keys() {
         if (reduced_time <= consumed_time) break;
     }
 
+    pools_lock->lock();
     // step 4: distribute local-served keys to workers
-    std::lock_guard<std::mutex> pools_lock(worker_pools_mutex_);
     std::vector<std::vector<int> > worker_keys_stat;
     for (int worker_id; worker_id<num_workers_; worker_id++) {
         std::vector<int> keys_stat{0, 0};
         worker_keys_stat.push_back(keys_stat);
+        worker_num_keys_assigned_[worker_id].push(0);
     }
+    int local_worker_id = 0;
     int worker_id = 0;
-    int rnd_offset = 0;
     for (int proc_id=0; proc_id<num_procs_; proc_id++) {
         int num_local_workers = proc_worker_map_[proc_id].size();
         for (int key_type=0; key_type<2; key_type++) {
             for (auto& split_keys : proc_new_keys_pools[proc_id][key_type]) {
                 int num_keys = split_keys.second.size();
-                rnd_offset = rand() % num_local_workers;
                 for (int i=0; i<num_keys; i++) {
-                    worker_id = (i + rnd_offset) % num_workers_;
+                    local_worker_id = (i + proc_worker_offset_[proc_id]) % num_local_workers;
+                    worker_id = proc_worker_map_[proc_id][local_worker_id];
                     worker_keys_pools_[worker_id][splits_[split_keys.first].get_sn()].push_back(split_keys.second.back());
                     worker_keys_stat[worker_id][key_type]++;
                     split_keys.second.pop_back();
                 }
+                proc_worker_offset_[proc_id] = local_worker_id + 1;
             }
         }
     }
 
     // step 5: distribute non-local-served keys
-    int i = 0;
     for (auto& split_keys : non_local_served_keys_) {
         int num_keys = split_keys.second.size();
-        rnd_offset = rand() % num_workers_;
-        for (int j=0; j<num_keys; j++) {
-            worker_id = (i++ + rnd_offset) % num_workers_;
+        for (int i=0; i<num_keys; i++) {
+            worker_id = (i + non_local_offset_) % num_workers_;
             worker_keys_pools_[worker_id][splits_[split_keys.first].get_sn()].push_back(split_keys.second.back());
             worker_keys_stat[worker_id][1]++;
             proc_keys_stat_[work_info_.get_process_id(worker_id)][1]++;
             split_keys.second.pop_back();
         }
+        non_local_offset_ = worker_id + 1;
     }
+
+    // step 6: count worker-level assigned keys
+    for (int worker_id; worker_id<num_workers_; worker_id++) {
+        for (int key_type=0; key_type<2; key_type++) {
+            worker_num_keys_assigned_[worker_id].back() += worker_keys_stat[worker_id][key_type];
+        }
+    }
+    pools_lock->unlock();
 
     /* visualize worker stat
     for (int worker_id; worker_id<num_workers_; worker_id++) {
@@ -808,7 +884,12 @@ void RedisSplitAssigner::schedule_keys() {
         LOG_I << "worker_" << worker_id << " load: " << workers_load[worker_id] << ", \tkeys: " << worker_keys_stat[worker_id][0] + worker_keys_stat[worker_id][1] << "[" << float(worker_keys_stat[worker_id][0]) / (worker_keys_stat[worker_id][0]+worker_keys_stat[worker_id][1]) * 100 << "%]";
     }
     */
+    worker_keys_stat.clear();
 
+    num_keys_scheduled_ += batch_keys_.size();
+    if (num_keys_scheduled_ == num_keys_amount_) {
+        if_all_keys_scheduled_ = true;
+    }
     batch_keys_.clear();
     
     if (reply) {

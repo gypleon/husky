@@ -134,20 +134,16 @@ void RedisInputFormat::create_redis_cons() {
 }
 
 // ask master for a set of best keys, with their location 
-bool RedisInputFormat::ask_best_keys() {
+int RedisInputFormat::ask_best_keys() {
     BinStream question;
     question << husky::Context::get_global_tid();
     BinStream answer = husky::Context::get_coordinator()->ask_master(question, husky::TYPE_REDIS_REQ);
-    int if_no_more_keys;
-    answer >> if_no_more_keys;
-    // LOG_I << if_no_more_keys;
+    int task_status;
+
+    answer >> task_status;
     answer >> best_keys_;
 
-    if (1==if_no_more_keys) {
-        return false;
-    } else {
-        return true;
-    }
+    return task_status;
 }
 
 std::string RedisInputFormat::parse_host(const std::string& hostname) {
@@ -185,13 +181,13 @@ void RedisInputFormat::fetch_split_records(int split_i, const std::vector<RedisR
         freeReplyObject(reply);
     }
 
-    for ( auto& key : keys) {
-        if ( !key.str_.compare("") ) {
+    for (auto& key : keys) {
+        if (!key.str_.compare("")) {
             LOG_E << "empty key <- " << split.get_ip() << ":" << split.get_port();
             continue;
         }
         redisReply * cur_data = redisCmd(c, "TYPE %s", key.str_.c_str());
-        if (!strcmp(cur_data->str, "string")){
+        if (!strcmp(cur_data->str, "string")) {
             pt::ptree string_js;
             cur_data = redisCmd(c, "GET %s", key.str_.c_str());
             std::string value(cur_data->str);
@@ -200,11 +196,11 @@ void RedisInputFormat::fetch_split_records(int split_i, const std::vector<RedisR
             pt::write_json(jsonvalue, string_js);
             std::string jsonstring = jsonvalue.str();
             records_vector_.push_back(std::make_pair<std::string, std::string>("string", jsonstring.c_str()));
-        } else if (!strcmp(cur_data->str, "list")){
+        } else if (!strcmp(cur_data->str, "list")) {
 			pt::ptree root;
             pt::ptree list_js;
             cur_data = redisCmd(c, "LRANGE %s %d %d", key.str_.c_str(), key.start_, key.end_);
-            for ( int j=0; j<cur_data->elements; j++ ) {
+            for (int j=0; j<cur_data->elements; j++) {
                 std::string value(cur_data->element[j]->str);
                 pt::ptree element;
                 element.put("", value);
@@ -215,7 +211,7 @@ void RedisInputFormat::fetch_split_records(int split_i, const std::vector<RedisR
             pt::write_json(jsonvalue, root);
             std::string jsonstring = jsonvalue.str();
             records_vector_.push_back(std::make_pair<std::string, std::string>("list", jsonstring.c_str()));
-        } else if (!strcmp(cur_data->str, "hash")){
+        } else if (!strcmp(cur_data->str, "hash")) {
             pt::ptree root;
             pt::ptree hash_js;
             int hcursor = 0;
@@ -224,7 +220,7 @@ void RedisInputFormat::fetch_split_records(int split_i, const std::vector<RedisR
                 hcursor = atoi(cur_data->element[0]->str);
                 std::string field;
                 std::string value;
-                for (int j=0; j<cur_data->element[1]->elements; j+=2){
+                for (int j=0; j<cur_data->element[1]->elements; j+=2) {
                     field = cur_data->element[1]->element[j]->str;
                     value = cur_data->element[1]->element[j+1]->str;
                     LOG_I << "input HASH: " << key.str_ << "-" << field << "-" << value;
@@ -236,7 +232,7 @@ void RedisInputFormat::fetch_split_records(int split_i, const std::vector<RedisR
             pt::write_json(jsonvalue, root);
             std::string jsonstring = jsonvalue.str();
             records_vector_.push_back(std::make_pair<std::string, std::string>("hash", jsonstring.c_str()));
-        } else if (!strcmp(cur_data->str, "set")){
+        } else if (!strcmp(cur_data->str, "set")) {
             pt::ptree root;
             pt::ptree set_js;
             int scursor = 0;
@@ -244,7 +240,7 @@ void RedisInputFormat::fetch_split_records(int split_i, const std::vector<RedisR
                 cur_data = redisCmd(c, "SSCAN %s %d COUNT %d", key.str_.c_str(), scursor, ITER_STEP);
                 scursor = atoi(cur_data->element[0]->str);
                 std::string value;
-                for (int j=0; j<cur_data->element[1]->elements; j++){
+                for (int j=0; j<cur_data->element[1]->elements; j++) {
                     value = cur_data->element[1]->element[j]->str;
 				    pt::ptree element;
                     element.put("", value);
@@ -257,16 +253,16 @@ void RedisInputFormat::fetch_split_records(int split_i, const std::vector<RedisR
             pt::write_json(jsonvalue, root);
             std::string jsonstring = jsonvalue.str();
             records_vector_.push_back(std::make_pair<std::string, std::string>("set", jsonstring.c_str()));
-        } else if (!strcmp(cur_data->str, "zset")){
+        } else if (!strcmp(cur_data->str, "zset")) {
             pt::ptree root;
             pt::ptree zset_js;
             int zcursor = 0;
-            do{
+            do {
                 cur_data = redisCmd(c, "ZSCAN %s %d COUNT %d", key.str_.c_str(), zcursor, ITER_STEP);
                 zcursor = atoi(cur_data->element[0]->str);
                 std::string value;
                 std::string score;
-                for (int j=0; j<cur_data->element[1]->elements; j+=2){
+                for (int j=0; j<cur_data->element[1]->elements; j+=2) {
                     value = cur_data->element[1]->element[j]->str;
                     score = cur_data->element[1]->element[j+1]->str;
 				    pt::ptree element;
@@ -280,7 +276,7 @@ void RedisInputFormat::fetch_split_records(int split_i, const std::vector<RedisR
             pt::write_json(jsonvalue, root);
             std::string jsonstring = jsonvalue.str();
             records_vector_.push_back(std::make_pair<std::string, std::string>("zset", jsonstring.c_str()));
-        } else if (nullptr != cur_data->str){
+        } else if (nullptr != cur_data->str) {
             LOG_E << "Failed to read data :" << std::string(cur_data->str) << " <- " << gen_slot_crc16(key.str_.c_str(), key.str_.length()) << " " << split.get_ip() << ":" << split.get_port() << " <- " << key.str_;
         } else {
             LOG_E << "Failed to read data without data";
@@ -308,9 +304,9 @@ bool RedisInputFormat::next(RecordT& ref) {
         if_pop_record_ = false;
     }
 
-    bool if_next = true;
+    int task_status = 0;
     if (records_vector_.empty()) {
-        if_next = ask_best_keys();
+        task_status = ask_best_keys();
         bool if_best_keys_empty = true;
         for (auto& split_keys : best_keys_) {
             if (!split_keys.empty()) {
@@ -327,15 +323,22 @@ bool RedisInputFormat::next(RecordT& ref) {
             best_keys_.clear();
             ref = records_vector_.back();
             if_pop_record_ = true;
-        } else {
-            LOG_E << "no keys assigned";
+        } else if (2 != task_status) {
+            LOG_E << "no keys assigned.";
         }
     } else {
         ref = records_vector_.back();
         if_pop_record_ = true;
     }
 
-    return if_next;
+    switch (task_status) {
+        case 1: {
+                    return false;
+                }
+        default: {
+                     return true;
+                 }
+    }
 }
 
 uint16_t RedisInputFormat::gen_slot_crc16(const char *buf, int len) {

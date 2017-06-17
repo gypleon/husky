@@ -49,7 +49,7 @@ public:
 private:
     void ask_redis_splits_info();
     void create_redis_cons();
-    bool ask_best_keys();
+    int ask_best_keys();
     void fetch_split_records(int split_i, const std::vector<RedisRangeKey>& keys);
     void send_end(std::vector<std::vector<RedisRangeKey> >& best_keys);
 
