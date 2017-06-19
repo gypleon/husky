@@ -18,9 +18,9 @@
 #include <map>
 #include <vector>
 
-#include "boost/tokenizer.hpp"
-#include "mongo/bson/bson.h"
-#include "mongo/client/dbclient.h"
+// #include "boost/tokenizer.hpp"
+// #include "mongo/bson/bson.h"
+// #include "mongo/client/dbclient.h"
 
 #include "core/engine.hpp"
 #include "io/input/inputformat_store.hpp"
@@ -43,48 +43,46 @@ void test() {
     outputformat.set_server();
     // outputformat.set_auth(pwd);
 
-    mongo::BSONElement fields[5];
+    const char * field_names[] = {"md5", "title", "url", "content", "id"};
+    int length_field_names = sizeof(field_names) / sizeof(field_names[0]);
+    mongo::BSONElement fields[length_field_names];
     auto read_and_write = [&](std::string& chunk) {
         mongo::BSONObj o = mongo::fromjson(chunk);
-        // parse data
-        const char * field_names[] = {"title", "url", "content", "id", "md5"};
-        o.getFields(5, field_names, fields);
+        o.getFields(length_field_names, field_names, fields);
 
-        // commit string
-        // std::string key = fields[4].toString(false, true);
-        // std::string str_data = fields[2].toString(false, true);
-        // // remove '"' on both ends
-        // key = key.substr(1, key.size()-2);
-        // str_data = str_data.substr(1, str_data.size()-2);
-        // outputformat.commit(key, str_data);
-
-        // commit map
+        /* commit string
         std::string key = fields[0].toString(false, true);
-        // remove '"' on both ends
+        std::string str_data = fields[3].toString(false, true);
+        key = key.substr(1, key.size()-2);
+        str_data = str_data.substr(1, str_data.size()-2);
+        outputformat.commit(key, str_data);
+        */
+
+        /* commit map
+        */
+        std::string key = fields[0].toString(false, true);
         key = key.substr(1, key.size()-2);
         std::map<std::string, std::string> map_data;
-        for (int i=1; i<5; i++) {
-            map_data[field_names[i]] = fields[i].toString(false, true);
-            // str_data = str_data.substr(1, str_data.size()-2);
+        std::string value;
+        for (int i=1; i<length_field_names; i++) {
+            value = fields[i].toString(false, true);
+            value = value.substr(1, value.size()-2);
+            map_data[std::string(field_names[i])] = value;
         }
         outputformat.commit(key, map_data);
 
-        // commit vector
-        // std::string key = fields[4].toString(false, true);
-        // std::vector<std::string> vec_data;
-        // vec_data.push_back(fields[0].toString(false, true));
-        // vec_data.push_back(fields[1].toString(false, true));
-        // vec_data.push_back(fields[2].toString(false, true));
-        // vec_data.push_back(fields[3].toString(false, true));
-
-        // // remove '"' on both ends
-        // key = key.substr(1, key.size()-2);
-        // // husky::LOG_I << key;
-        // for ( auto& field : vec_data ) {
-        //     field = field.substr(1, field.size()-2);
-        //     // husky::LOG_I << "|" << field;
-        // }
-        // outputformat.commit(key, vec_data);
+        /* commit vector
+        std::string key = fields[0].toString(false, true);
+        key = key.substr(1, key.size()-2);
+        std::vector<std::string> vec_data;
+        std::string value;
+        for (int i=1; i<length_field_names; i++) {
+            value = fields[i].toString(false, true);
+            value = value.substr(1, value.size()-2);
+            vec_data.push_back(value);
+        }
+        outputformat.commit(key, vec_data);
+        */
     };
 
     husky::load(inputformat, read_and_write);

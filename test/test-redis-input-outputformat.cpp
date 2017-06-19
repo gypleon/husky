@@ -39,42 +39,41 @@ void test() {
     // outputformat.set_auth(pwd);
 
     auto read_and_write = [&](husky::io::RedisInputFormat::RecordT& record_pair) {
-
         namespace pt = boost::property_tree;
         pt::ptree reader;
         std::stringstream jsonstream;
         std::string datatype = record_pair.first;
         jsonstream << record_pair.second;
+        pt::read_json(jsonstream, reader);
 
         std::string key;
-        std::string str_data;
 
         if ("string" == datatype) {
-            pt::read_json(jsonstream, reader);
-            for ( auto& kv : reader ) {
-                key = kv.first;
-                str_data = kv.second.get_value<std::string>();
+            std::string str_data;
+            key = reader.begin()->first;
+            str_data = reader.begin()->second.get_value<std::string>();
+            outputformat.commit(key, str_data);
+        } else if ("hash" == datatype) {
+            std::map<std::string, std::string> map_data;
+            key = reader.begin()->first;
+            auto& value = reader.begin()->second;
+            for (auto& kv : value) {
+                auto k = kv.first;
+                auto v = kv.second.get_value<std::string>();
+                map_data[k] = v;
             }
+            outputformat.commit(key, map_data);
+        } else if ("list" == datatype) {
+            std::vector<std::string> vec_data;
+            key = reader.begin()->first;
+            auto& value = reader.begin()->second;
+            for (auto& kv : value) {
+                vec_data.push_back(kv.second.get_value<std::string>());
+            }
+            outputformat.commit(key, vec_data);
+        } else {
+            husky::LOG_E << "undefined data structure";
         }
-        outputformat.commit(key, str_data);
-
-        // commit map
-        // std::string key = fields[4].toString(false, true);
-        // std::map<std::string, std::string> map_data;
-        // map_data["title"] = fields[0].toString(false, true);
-        // map_data["url"] = fields[1].toString(false, true);
-        // map_data["content"] = fields[2].toString(false, true);
-        // map_data["id"] = fields[3].toString(false, true);
-        // outputformat.commit(key, map_data);
-
-        // commit vector
-        // std::string key = fields[4].toString(false, true);
-        // std::vector<std::string> vec_data;
-        // vec_data.push_back(fields[0].toString(false, true));
-        // vec_data.push_back(fields[1].toString(false, true));
-        // vec_data.push_back(fields[2].toString(false, true));
-        // vec_data.push_back(fields[3].toString(false, true));
-        // outputformat.commit(key, vec_data);
     };
 
     husky::load(inputformat, read_and_write);

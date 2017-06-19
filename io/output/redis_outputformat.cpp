@@ -28,7 +28,7 @@
 #include <ctime>
 #include <chrono>
 
-#define CHECK(X) if ( !X || X->type == REDIS_REPLY_ERROR ) { LOG_E << "Error"; exit(-1); }
+#define CHECKREPLY(X) if ( !X || X->type == REDIS_REPLY_ERROR ) { LOG_E << "Error"; exit(-1); }
 
 namespace husky {
 namespace io {
@@ -130,7 +130,7 @@ void RedisOutputFormat::create_redis_con_pool() {
         }
         if (need_auth_) {
             reply = redisCmd(c, "AUTH %s", password_.c_str());
-            CHECK(reply);
+            CHECKREPLY(reply);
         }
         std::pair<redisContext *, int> con(c, 0);
         cons_[split.second.get_id()] = con;
@@ -189,7 +189,7 @@ int RedisOutputFormat::flush_all() {
                                 std::vector<char> result_list;
                                 result_stream >> result_list;
                                 for (auto& result : result_list) {
-                                    redisCmd(c, "LPUSH %s %c", key, result);
+                                    redisCmd(c, "LPUSH %s %c", key.c_str(), result);
                                 }
                             }
                         case RedisOutputFormat::InnerDataType::Short: 
@@ -199,7 +199,7 @@ int RedisOutputFormat::flush_all() {
                                 std::vector<long int> result_list;
                                 result_stream >> result_list;
                                 for (auto& result : result_list) {
-                                    redisCmd(c, "LPUSH %s %d", key, result);
+                                    redisCmd(c, "LPUSH %s %d", key.c_str(), result);
                                 }
                             }
                             break;
@@ -208,7 +208,7 @@ int RedisOutputFormat::flush_all() {
                                 std::vector<bool> result_list;
                                 result_stream >> result_list;
                                 for (auto result : result_list) {
-                                    redisCmd(c, "LPUSH %s %s", key, result ? "true" : "false");
+                                    redisCmd(c, "LPUSH %s %s", key.c_str(), result ? "true" : "false");
                                 }
                             }
                             break;
@@ -217,7 +217,7 @@ int RedisOutputFormat::flush_all() {
                                 std::vector<float> result_list;
                                 result_stream >> result_list;
                                 for (auto& result : result_list) {
-                                    redisCmd(c, "LPUSH %s %f", key, result);
+                                    redisCmd(c, "LPUSH %s %f", key.c_str(), result);
                                 }
                             }
                             break;
@@ -226,7 +226,7 @@ int RedisOutputFormat::flush_all() {
                                 std::vector<double> result_list;
                                 result_stream >> result_list;
                                 for (auto& result : result_list) {
-                                    redisCmd(c, "LPUSH %s %lf", key, result);
+                                    redisCmd(c, "LPUSH %s %lf", key.c_str(), result);
                                 }
                             }
                             break;
@@ -235,7 +235,7 @@ int RedisOutputFormat::flush_all() {
                                 std::vector<std::string> result_list;
                                 result_stream >> result_list;
                                 for (auto& result : result_list) {
-                                    redisCmd(c, "LPUSH %s %s", key, result);
+                                    redisCmd(c, "LPUSH %s %s", key.c_str(), result.c_str());
                                 }
                             }
                             break;
@@ -252,56 +252,56 @@ int RedisOutputFormat::flush_all() {
                     switch (inner_data_type) {
                         case RedisOutputFormat::InnerDataType::Char:
                             {
-                                std::map<RedisOutputFormat::DataType, char> result_map;
+                                std::map<std::string, char> result_map;
                                 result_stream >> result_map;
                                 for (auto& result : result_map) {
-                                    redisCmd(c, "HSET %s %s %c", key, result.first, result.second);
+                                    redisCmd(c, "HSET %s %s %c", key.c_str(), result.first.c_str(), result.second);
                                 }
                             }
                         case RedisOutputFormat::InnerDataType::Short: 
                         case RedisOutputFormat::InnerDataType::Int: 
                         case RedisOutputFormat::InnerDataType::Long:
                             {
-                                std::map<RedisOutputFormat::DataType, long int> result_map;
+                                std::map<std::string, long int> result_map;
                                 result_stream >> result_map;
                                 for (auto& result : result_map) {
-                                    redisCmd(c, "HSET %s %s %d", key, result.first, result.second);
+                                    redisCmd(c, "HSET %s %s %d", key.c_str(), result.first.c_str(), result.second);
                                 }
                             }
                             break;
                         case RedisOutputFormat::InnerDataType::Bool:
                             {
-                                std::map<RedisOutputFormat::DataType, bool> result_map;
+                                std::map<std::string, bool> result_map;
                                 result_stream >> result_map;
                                 for (auto& result : result_map) {
-                                    redisCmd(c, "HSET %s %s %s", key, result.first, result.second ? "true" : "false");
+                                    redisCmd(c, "HSET %s %s %s", key.c_str(), result.first.c_str(), result.second ? "true" : "false");
                                 }
                             }
                             break;
                         case RedisOutputFormat::InnerDataType::Float:
                             {
-                                std::map<RedisOutputFormat::DataType, float> result_map;
+                                std::map<std::string, float> result_map;
                                 result_stream >> result_map;
                                 for (auto& result : result_map) {
-                                    redisCmd(c, "HSET %s %s %f", key, result.first, result.second);
+                                    redisCmd(c, "HSET %s %s %f", key.c_str(), result.first.c_str(), result.second);
                                 }
                             }
                             break;
                         case RedisOutputFormat::InnerDataType::Double:
                             {
-                                std::map<RedisOutputFormat::DataType, double> result_map;
+                                std::map<std::string, double> result_map;
                                 result_stream >> result_map;
                                 for (auto& result : result_map) {
-                                    redisCmd(c, "HSET %s %s %lf", key, result.first, result.second);
+                                    redisCmd(c, "HSET %s %s %lf", key.c_str(), result.first.c_str(), result.second);
                                 }
                             }
                             break;
                         case RedisOutputFormat::InnerDataType::String:
                             {
-                                std::map<RedisOutputFormat::DataType, std::string> result_map;
+                                std::map<std::string, std::string> result_map;
                                 result_stream >> result_map;
                                 for (auto& result : result_map) {
-                                    redisCmd(c, "HSET %s %s %s", key, result.first, result.second);
+                                    redisCmd(c, "HSET %s %s %s", key.c_str(), result.first.c_str(), result.second.c_str());
                                 }
                             }
                             break;
@@ -332,7 +332,7 @@ int RedisOutputFormat::flush_all() {
                 LOG_E << "REDIS_ERR"; 
                 exit(-1); 
             }
-            // CHECK(reply);
+            // CHECKREPLY(reply);
             if (!reply) {
                 LOG_E << "NULL REPLY"; 
             } else if (reply->type == REDIS_REPLY_ERROR) { 

@@ -37,6 +37,8 @@
 #include "boost/property_tree/ptree.hpp"
 #include "boost/property_tree/json_parser.hpp"
 
+#define SEP '/'
+
 namespace husky {
 namespace io {
 
@@ -165,7 +167,7 @@ void RedisInputFormat::fetch_split_records(int split_i, const std::vector<RedisR
     redisContext * c = cons_[split_id];
 
     if (!split.is_valid()) {
-        LOG_E << "Redis split invalid: " << split.get_id();
+        LOG_E << "Redis instance invalid: " << split.get_id();
         return;
     }
 
@@ -191,7 +193,8 @@ void RedisInputFormat::fetch_split_records(int split_i, const std::vector<RedisR
             pt::ptree string_js;
             cur_data = redisCmd(c, "GET %s", key.str_.c_str());
             std::string value(cur_data->str);
-            string_js.put(key.str_, value); 
+            pt::ptree::path_type key_path(key.str_, SEP);
+            string_js.put(key_path, value); 
             std::stringstream jsonvalue;
             pt::write_json(jsonvalue, string_js);
             std::string jsonstring = jsonvalue.str();
@@ -206,7 +209,8 @@ void RedisInputFormat::fetch_split_records(int split_i, const std::vector<RedisR
                 element.put("", value);
                 list_js.push_back(std::make_pair("", element));
             }
-			root.add_child(key.str_, list_js);
+            pt::ptree::path_type key_path(key.str_, SEP);
+			root.add_child(key_path, list_js);
             std::stringstream jsonvalue;
             pt::write_json(jsonvalue, root);
             std::string jsonstring = jsonvalue.str();
@@ -214,24 +218,22 @@ void RedisInputFormat::fetch_split_records(int split_i, const std::vector<RedisR
         } else if (!strcmp(cur_data->str, "hash")) {
             pt::ptree root;
             pt::ptree hash_js;
-            int hcursor = 0;
-            do {
-                cur_data = redisCmd(c, "HSCAN %s %d COUNT %d", key.str_.c_str(), hcursor, ITER_STEP);
-                hcursor = atoi(cur_data->element[0]->str);
-                std::string field;
-                std::string value;
-                for (int j=0; j<cur_data->element[1]->elements; j+=2) {
-                    field = cur_data->element[1]->element[j]->str;
-                    value = cur_data->element[1]->element[j+1]->str;
-                    LOG_I << "input HASH: " << key.str_ << "-" << field << "-" << value;
-                    hash_js.put(field, value);
-                }
-            } while (hcursor);
-			root.add_child(key.str_, hash_js);
+            cur_data = redisCmd(c, "HGETALL %s", key.str_.c_str());
+            std::string field;
+            std::string value;
+            for (int j=0; j<cur_data->elements; j+=2) {
+                field = cur_data->element[j]->str;
+                value = cur_data->element[j+1]->str;
+                pt::ptree::path_type field_path(field, SEP);
+                hash_js.put(field_path, value);
+            }
+            pt::ptree::path_type key_path(key.str_, SEP);
+			root.add_child(key_path, hash_js);
             std::stringstream jsonvalue;
             pt::write_json(jsonvalue, root);
             std::string jsonstring = jsonvalue.str();
-            records_vector_.push_back(std::make_pair<std::string, std::string>("hash", jsonstring.c_str()));
+            // records_vector_.push_back(std::make_pair<std::string, std::string>("hash", jsonstring.c_str()));
+            records_vector_.push_back(std::make_pair("hash", jsonstring.c_str()));
         } else if (!strcmp(cur_data->str, "set")) {
             pt::ptree root;
             pt::ptree set_js;
@@ -244,11 +246,12 @@ void RedisInputFormat::fetch_split_records(int split_i, const std::vector<RedisR
                     value = cur_data->element[1]->element[j]->str;
 				    pt::ptree element;
                     element.put("", value);
-                    LOG_I << "input SET: " << key.str_ << "-" << value;
+                    // LOG_I << "input SET: " << key.str_ << "-" << value;
                     set_js.push_back(std::make_pair("", element));
                 }
             } while (scursor);
-			root.add_child(key.str_, set_js);
+            pt::ptree::path_type key_path(key.str_, SEP);
+			root.add_child(key_path, set_js);
             std::stringstream jsonvalue;
             pt::write_json(jsonvalue, root);
             std::string jsonstring = jsonvalue.str();
@@ -266,26 +269,27 @@ void RedisInputFormat::fetch_split_records(int split_i, const std::vector<RedisR
                     value = cur_data->element[1]->element[j]->str;
                     score = cur_data->element[1]->element[j+1]->str;
 				    pt::ptree element;
-                    element.put(value, score);
-                    LOG_I << "input SET: " << key.str_ << "-" << value << "-" << score;
+                    pt::ptree::path_type value_path(value, SEP);
+                    element.put(value_path, score);
+                    // LOG_I << "input ZSET: " << key.str_ << "-" << value << "-" << score;
                     zset_js.push_back(std::make_pair("", element));
                 }
             } while (zcursor);
-			root.add_child(key.str_, zset_js);
+            pt::ptree::path_type key_path(key.str_, SEP);
+			root.add_child(key_path, zset_js);
             std::stringstream jsonvalue;
             pt::write_json(jsonvalue, root);
             std::string jsonstring = jsonvalue.str();
             records_vector_.push_back(std::make_pair<std::string, std::string>("zset", jsonstring.c_str()));
         } else if (nullptr != cur_data->str) {
-            LOG_E << "Failed to read data :" << std::string(cur_data->str) << " <- " << gen_slot_crc16(key.str_.c_str(), key.str_.length()) << " " << split.get_ip() << ":" << split.get_port() << " <- " << key.str_;
+            LOG_E << "Failed to read data: " << std::string(cur_data->str) << " <- " << gen_slot_crc16(key.str_.c_str(), key.str_.length()) << " " << split.get_ip() << ":" << split.get_port() << " <- " << key.str_;
         } else {
-            LOG_E << "Failed to read data without data";
+            LOG_E << "Failed to read data: without data";
 		}
         freeReplyObject(cur_data);
     }
 }
 
-// all data have been read
 void RedisInputFormat::send_end(std::vector<std::vector<RedisRangeKey> >& best_keys) {
     BinStream question;
     int num_received_keys = 0;
