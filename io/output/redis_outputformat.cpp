@@ -73,7 +73,9 @@ void RedisOutputFormat::set_auth(const std::string& password) {
     is_setup_ |= RedisOutputFormatSetUp::AuthSetUp;
 }
 
-bool RedisOutputFormat::is_setup() const { return !(is_setup_ ^ RedisOutputFormatSetUp::AllSetUp); }
+bool RedisOutputFormat::is_setup() const { 
+    return !(is_setup_ ^ RedisOutputFormatSetUp::AllSetUp);
+}
 
 void RedisOutputFormat::ask_redis_masters_info() {
     BinStream question;
@@ -151,8 +153,7 @@ int RedisOutputFormat::flush_all() {
     for (auto& record : records_map_) {
         std::string key = record.first;
         RedisOutputFormat::DataType data_type = record.second.first;
-        BinStream result_stream;
-        result_stream << record.second.second;
+        BinStream result_stream = record.second.second;
 
         uint16_t target_slot = gen_slot_crc16(key.c_str(), key.length());
         int master_i = target_slot / num_slots_per_group_;
@@ -172,7 +173,8 @@ int RedisOutputFormat::flush_all() {
         switch (data_type) {
             case RedisOutputFormat::DataType::RedisString:
                 {
-                    const std::string& result_string = record.second.second;
+                    std::string result_string;
+                    result_stream >> result_string;
                     redisAppendCommand(c, "SET %b %b", key.c_str(), (size_t) key.length(), result_string.c_str(), (size_t) result_string.length());
                     ++(*c_count);
                 }
@@ -317,6 +319,7 @@ int RedisOutputFormat::flush_all() {
                 // redisCmd("ZADD %s %d %s", );
                 break;
             default:
+                LOG_E << "undefined data structure";
                 break;
         }
     }

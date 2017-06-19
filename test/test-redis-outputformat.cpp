@@ -63,7 +63,7 @@ void test() {
         // remove '"' on both ends
         key = key.substr(1, key.size()-2);
         std::map<std::string, std::string> map_data;
-        for ( int i=1; i<5; i++) {
+        for (int i=1; i<5; i++) {
             map_data[field_names[i]] = fields[i].toString(false, true);
             // str_data = str_data.substr(1, str_data.size()-2);
         }

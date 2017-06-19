@@ -90,9 +90,8 @@ private:
     bool need_auth_ = false;
     std::string password_;
     // mixed-type data waited to be flushed
-    std::map<std::string, std::pair<DataType, std::string> > records_map_;
-    // for Redis
-    struct timeval timeout_ = { 1, 500000};
+    std::map<std::string, std::pair<DataType, BinStream> > records_map_;
+    struct timeval timeout_ = {1, 500000};
     int records_bytes_ = 0;
     // number of connections for each redis master
     int number_clients_;
@@ -143,15 +142,17 @@ bool RedisOutputFormat::commit(const std::string& key, const std::string& result
         return false;
 
     const RedisOutputFormat::DataType data_type = RedisOutputFormat::DataType::RedisString;
-    std::pair<DataType, std::string> result_type_buffer(data_type, result_string);
+    BinStream result_stream;
+    result_stream << result_string;
 
-    records_map_[key] = result_type_buffer;
+    records_map_[key] = std::pair<DataType, BinStream>(data_type, result_stream);
     records_bytes_ += result_string.length();
 
-    if (records_bytes_ >= flush_buffer_size_)
-    {
+    if (records_bytes_ >= flush_buffer_size_) {
         flush_all();
         return true;
+    } else {
+        return false;
     }
 }
 
@@ -168,15 +169,15 @@ bool RedisOutputFormat::commit(const std::string& key, const std::vector<DataT>&
     result_stream << inner_data_type;
     result_stream << result_list;
     const std::string result_stream_buffer = result_stream.to_string();
-    std::pair<DataType, std::string> result_type_buffer(data_type, result_stream_buffer);
 
-    records_map_[key] = result_type_buffer;
+    records_map_[key] = std::pair<DataType, BinStream>(data_type, result_stream);
     records_bytes_ += result_stream_buffer.length();
 
-    if (records_bytes_ >= flush_buffer_size_)
-    {
+    if (records_bytes_ >= flush_buffer_size_) {
         flush_all();
         return true;
+    } else {
+        return false;
     }
 }
 
@@ -193,15 +194,15 @@ bool RedisOutputFormat::commit(const std::string& key, const std::map<std::strin
     result_stream << inner_data_type;
     result_stream << result_hash;
     const std::string result_stream_buffer = result_stream.to_string();
-    std::pair<DataType, std::string> result_type_buffer(data_type, result_stream_buffer);
 
-    records_map_[key] = result_type_buffer;
+    records_map_[key] = std::pair<DataType, BinStream>(data_type, result_stream);
     records_bytes_ += result_stream_buffer.length();
 
-    if (records_bytes_ >= flush_buffer_size_)
-    {
+    if (records_bytes_ >= flush_buffer_size_) {
         flush_all();
         return true;
+    } else {
+        return false;
     }
 }
 
