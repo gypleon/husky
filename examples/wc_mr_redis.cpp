@@ -17,15 +17,19 @@
 #include <utility>
 #include <vector>
 
-// #include "boost/tokenizer.hpp"
-// #include "mongo/bson/bson.h"
-// #include "mongo/client/dbclient.h"
+
 #include "hiredis/hiredis.h"
+#include "boost/property_tree/ptree.hpp"
+#include "boost/property_tree/json_parser.hpp"
+#include "boost/tokenizer.hpp"
 
 #include "base/serialization.hpp"
 #include "core/engine.hpp"
 #include "io/input/inputformat_store.hpp"
+#include "io/output/redis_outputformat.hpp"
 #include "lib/aggregator_factory.hpp"
+
+namespace pt = boost::property_tree;
 
 class Word {
    public:
@@ -44,27 +48,44 @@ bool operator<(const std::pair<int, std::string>& a, const std::pair<int, std::s
 }
 
 void wc() {
-    auto& infmt = husky::io::InputFormatStore::create_mongodb_inputformat();
-    infmt.set_server(husky::Context::get_param("mongo_server"));
-    infmt.set_ns(husky::Context::get_param("mongo_db"), husky::Context::get_param("mongo_collection"));
-    infmt.set_query("");
+    auto& inputformat = husky::io::InputFormatStore::create_redis_inputformat();
+    inputformat.set_server();
+
+    husky::io::RedisOutputFormat outputformat;
+    outputformat.set_server();
 
     auto& word_list = husky::ObjListStore::create_objlist<Word>();
-    auto& ch = husky::ChannelStore::create_push_combined_channel<int, husky::SumCombiner<int>>(infmt, word_list);
+    auto& ch = husky::ChannelStore::create_push_combined_channel<int, husky::SumCombiner<int>>(inputformat, word_list);
 
-    auto parse_wc = [&](std::string& chunk) {
-        mongo::BSONObj o = mongo::fromjson(chunk);
-        std::string content = o.getStringField("content");
-        if (chunk.size() == 0)
+    auto parse_wc = [&](husky::io::RedisInputFormat::RecordT& record_pair) {
+        pt::ptree reader, content_reader;
+        std::stringstream jsonstream, content_stream;
+        std::string datatype = record_pair.first;
+        jsonstream << record_pair.second;
+        pt::read_json(jsonstream, reader);
+
+        if ("string" == datatype) {
+            content_stream << reader.begin()->second.get_value<std::string>();
+            pt::read_json(content_stream, content_reader);
+            try {
+                std::string content = content_reader.get<std::string>("content");
+                // husky::LOG_I << content;
+                boost::char_separator<char> sep(" \t");
+                boost::tokenizer<boost::char_separator<char>> tok(content, sep);
+                for (auto& w : tok) {
+                    ch.push(1, w);
+                }
+            }
+            catch (pt::ptree_bad_path) {
+                husky::LOG_E << "invalid content field";
+                return;
+            }
+        } else {
             return;
-        boost::char_separator<char> sep(" \t");
-        boost::tokenizer<boost::char_separator<char>> tok(content, sep);
-        for (auto& w : tok) {
-            ch.push(1, w);
         }
     };
 
-    husky::load(infmt, parse_wc);
+    husky::load(inputformat, parse_wc);
 
     // Show topk words.
     const int kMaxNum = 10;
@@ -103,16 +124,17 @@ void wc() {
         for (auto& i : unique_topk.get_value())
             husky::LOG_I << i.second << " " << i.first;
     }
+
+    /* Output result to Redis as a Hash table
+    std::string result_key("WordCountResult");
+    std::map<std::string, int> result_map;
+    outputformat.commit(result_key, result_map);
+    */
 }
 
 int main(int argc, char** argv) {
-    std::vector<std::string> args;
-    args.push_back("mongo_server");
-    args.push_back("mongo_db");
-    args.push_back("mongo_collection");
-    if (husky::init_with_args(argc, argv, args)) {
-        husky::run_job(wc);
-        return 0;
-    }
-    return 1;
+    if (!husky::init_with_args(argc, argv, {"redis_ip", "redis_port", "redis_keys_pattern"}))
+        return 1;
+    husky::run_job(wc);
+    return 0;
 }

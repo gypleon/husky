@@ -61,6 +61,12 @@ target_link_libraries(WordCountFlume ${husky})
 target_link_libraries(WordCountFlume ${HUSKY_EXTERNAL_LIB})
 husky_default_properties(WordCountFlume)
 
+# WordCountRedis
+add_executable(WordCountRedis wc_mr_redis.cpp)
+target_link_libraries(WordCountRedis ${husky})
+target_link_libraries(WordCountRedis ${HUSKY_EXTERNAL_LIB})
+husky_default_properties(WordCountRedis)
+
 # PI
 add_executable(PI pi.cpp)
 target_link_libraries(PI ${husky})
@@ -132,9 +138,3 @@ add_executable(NN_MNIST nn_mnist.cpp)
 target_link_libraries(NN_MNIST ${husky})
 target_link_libraries(NN_MNIST ${HUSKY_EXTERNAL_LIB})
 husky_default_properties(NN_MNIST)
-    
-# TF-IDF-Redis
-add_executable(TF-IDF-Redis tfidf_redis.cpp)
-target_link_libraries(TF-IDF-Redis ${husky})
-target_link_libraries(TF-IDF-Redis ${EXTERNAL_LIB})
-husky_default_properties(TF-IDF-Redis)

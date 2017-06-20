@@ -18,10 +18,6 @@
 #include <map>
 #include <vector>
 
-#include "boost/tokenizer.hpp"
-#include "mongo/bson/bson.h"
-#include "mongo/client/dbclient.h"
-
 #include "core/engine.hpp"
 #include "io/input/inputformat_store.hpp"
 #include "io/output/redis_outputformat.hpp"
@@ -30,44 +26,38 @@
 #include "boost/property_tree/ptree.hpp"
 #include "boost/property_tree/json_parser.hpp"
 
+namespace pt = boost::property_tree;
+
 void test() {
     auto& inputformat = husky::io::InputFormatStore::create_redis_inputformat();
     inputformat.set_server();
+    // inputformat.set_auth(pwd);
 
     husky::io::RedisOutputFormat outputformat;
     outputformat.set_server();
     // outputformat.set_auth(pwd);
 
     auto read_and_write = [&](husky::io::RedisInputFormat::RecordT& record_pair) {
-        namespace pt = boost::property_tree;
         pt::ptree reader;
         std::stringstream jsonstream;
         std::string datatype = record_pair.first;
         jsonstream << record_pair.second;
         pt::read_json(jsonstream, reader);
 
-        std::string key;
+        const auto& key = reader.begin()->first;
 
         if ("string" == datatype) {
-            std::string str_data;
-            key = reader.begin()->first;
-            str_data = reader.begin()->second.get_value<std::string>();
-            outputformat.commit(key, str_data);
+            outputformat.commit(key, reader.begin()->second.get_value<std::string>());
         } else if ("hash" == datatype) {
             std::map<std::string, std::string> map_data;
-            key = reader.begin()->first;
-            auto& value = reader.begin()->second;
-            for (auto& kv : value) {
-                auto k = kv.first;
-                auto v = kv.second.get_value<std::string>();
-                map_data[k] = v;
+            for (auto& kv : reader.begin()->second) {
+                map_data[kv.first] = kv.second.get_value<std::string>();
             }
             outputformat.commit(key, map_data);
         } else if ("list" == datatype) {
+            // for Redis List, commit() performs as creating and/or appending list elements
             std::vector<std::string> vec_data;
-            key = reader.begin()->first;
-            auto& value = reader.begin()->second;
-            for (auto& kv : value) {
+            for (auto& kv : reader.begin()->second) {
                 vec_data.push_back(kv.second.get_value<std::string>());
             }
             outputformat.commit(key, vec_data);
@@ -83,7 +73,8 @@ void test() {
 }
 
 int main(int argc, char** argv) {
-    husky::ASSERT_MSG(husky::init_with_args(argc, argv, {"mongo_server", "mongo_db", "mongo_collection"}), "Wrong arguments!");
+    if (!husky::init_with_args(argc, argv, {"redis_ip", "redis_port", "redis_keys_pattern"}))
+        return 1;
     husky::run_job(test);
     return 0;
 }
