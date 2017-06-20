@@ -225,7 +225,7 @@ bool RedisSplitAssigner::refresh_splits_info() {
         return 0;
     }
 
-    // TODO: to be tested
+    // to be tested
     if (need_auth_) {
         reply = redisCmd(c, "AUTH %s", password_.c_str());
         CHECK(reply);
@@ -411,9 +411,9 @@ void RedisSplitAssigner::answer_tid_best_keys(int global_tid, std::vector<std::v
         }
     }
     if (is_dynamic_imported_ && is_pattern_batched_ && is_file_imported_ && if_all_keys_scheduled_ && if_no_worker_keys) {
-        worker_task_status_[global_tid] = 1;
+        worker_task_status_[global_tid] = io::RedisTaskStatus::NoMoreTask;
     } else if ((!is_dynamic_imported_ || !is_pattern_batched_ || !is_file_imported_ || !if_all_keys_scheduled_) && if_no_worker_keys) {
-        worker_task_status_[global_tid] = 2;
+        worker_task_status_[global_tid] = io::RedisTaskStatus::Abnormal;
     }
 }
 
@@ -509,7 +509,7 @@ void RedisSplitAssigner::create_husky_info() {
         // create worker-level fetched keys statistics
         worker_num_fetched_keys_.push_back(0);
         // create worker-level task status
-        worker_task_status_.push_back(0);
+        worker_task_status_.push_back(io::RedisTaskStatus::WaitTasks);
         // create worker-level batch keys statistics
         std::queue<int> worker_num_batch_keys;
         worker_num_keys_assigned_.push_back(worker_num_batch_keys);
@@ -532,7 +532,7 @@ void RedisSplitAssigner::create_redis_con_pool() {
             return;
         }
 
-        // TODO: to be tested
+        // to be tested
         if (need_auth_) {
             reply = redisCmd(c, "AUTH %s", password_.c_str());
         }
@@ -572,23 +572,24 @@ void RedisSplitAssigner::import_all_pattern_keys() {
 
     if (keys_pattern_.compare("")) {
         LOG_I << "keys from pattern [" << keys_pattern_ << "] ...";
-        for ( auto& split_group : split_groups_ ) {
+        for (auto& split_group : split_groups_) {
             RedisSplit master = splits_[split_group.first];
             reply = redisCmd(cons_[master.get_id()], "KEYS %s", keys_pattern_.c_str());
             LOG_I << "[" << reply->elements << "] matched on [" << master.get_ip() << ":" << master.get_port() << "]";
             // no record matches this pattern on this master
-            if ( reply->elements <= 0 )
+            if (reply->elements <= 0) {
                 continue;
+            }
             std::vector<std::string> split_all_keys;
             int i = 0;
-            for ( ; i<reply->elements; i++ ) {
+            for (; i<reply->elements; i++) {
                 std::string key = std::string(reply->element[i]->str);
                 split_all_keys.push_back(key);
             }
             all_keys_.push_back(split_all_keys);
             num_keys_amount_ += split_all_keys.size();
         }
-        LOG_I << "keys from pattern DONE";
+        LOG_I << "[" << num_keys_amount_ << "] keys from pattern DONE";
     }
 
     is_pattern_imported_ = true;

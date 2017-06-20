@@ -58,30 +58,33 @@ void wc() {
     auto& ch = husky::ChannelStore::create_push_combined_channel<int, husky::SumCombiner<int>>(inputformat, word_list);
 
     auto parse_wc = [&](husky::io::RedisInputFormat::RecordT& record_pair) {
+        auto datatype = record_pair.first;
+
         pt::ptree reader, content_reader;
         std::stringstream jsonstream, content_stream;
-        std::string datatype = record_pair.first;
         jsonstream << record_pair.second;
         pt::read_json(jsonstream, reader);
 
-        if ("string" == datatype) {
-            content_stream << reader.begin()->second.get_value<std::string>();
-            pt::read_json(content_stream, content_reader);
-            try {
-                std::string content = content_reader.get<std::string>("content");
-                // husky::LOG_I << content;
-                boost::char_separator<char> sep(" \t");
-                boost::tokenizer<boost::char_separator<char>> tok(content, sep);
-                for (auto& w : tok) {
-                    ch.push(1, w);
-                }
-            }
-            catch (pt::ptree_bad_path) {
-                husky::LOG_E << "invalid content field";
+        switch (datatype) {
+            case husky::io::RedisInputFormat::RedisDataType::String: 
+                {
+                    content_stream << reader.begin()->second.get_value<std::string>();
+                    pt::read_json(content_stream, content_reader);
+                    try {
+                        std::string content = content_reader.get<std::string>("content");
+                        boost::char_separator<char> sep(" \t");
+                        boost::tokenizer<boost::char_separator<char>> tok(content, sep);
+                        for (auto& w : tok) {
+                            ch.push(1, w);
+                        }
+                    }
+                    catch (pt::ptree_bad_path) {
+                        husky::LOG_E << "invalid content field";
+                        return;
+                    }
+                } break;
+            default:
                 return;
-            }
-        } else {
-            return;
         }
     };
 

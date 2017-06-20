@@ -28,6 +28,12 @@ using base::BinStream;
 
 struct RedisRangeKey;
 
+typedef enum RedisTaskStatus {
+    WaitTasks,
+    NoMoreTask,
+    Abnormal
+} RedisTaskStatus;
+
 class RedisSplit {
     public:
         RedisSplit();
@@ -88,27 +94,6 @@ class RedisSplit {
         int slots_end_;
 };
 
-class RedisBestKeys {
-    public:
-        RedisBestKeys();
-        RedisBestKeys(const RedisBestKeys& other);
-        ~RedisBestKeys();
-
-        // Set / Add
-        void add_key(RedisSplit rs, RedisRangeKey key);
-        void set_keys(std::map<RedisSplit, std::vector<RedisRangeKey> > best_keys);
-
-        // Get
-        const std::map<RedisSplit, std::vector<RedisRangeKey> > &get_keys();
-
-        // Del
-        int del_split(const RedisSplit& split);
-        void clear() { best_keys_.clear(); }
-
-    private:
-        std::map<RedisSplit, std::vector<RedisRangeKey> > best_keys_;
-};
-
 // for master-slaves load balance
 class RedisSplitGroup {
     public:
@@ -143,9 +128,6 @@ struct RedisRangeKey {
 
 BinStream& operator<<(BinStream& stream, const RedisSplit& split);
 BinStream& operator>>(BinStream& stream, RedisSplit& split);
-
-BinStream& operator<<(BinStream& stream, RedisBestKeys& keys);
-BinStream& operator>>(BinStream& stream, RedisBestKeys& keys);
 
 BinStream& operator<<(BinStream& stream, const RedisRangeKey& key);
 BinStream& operator>>(BinStream& stream, RedisRangeKey& key);

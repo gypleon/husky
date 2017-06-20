@@ -36,7 +36,6 @@
 namespace husky {
 
 using io::RedisSplit;
-using io::RedisBestKeys;
 using io::RedisSplitGroup;
 using io::RedisRangeKey;
 

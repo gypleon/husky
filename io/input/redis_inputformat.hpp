@@ -25,6 +25,7 @@
 #include "io/input/redis_split.hpp"
 
 #define ITER_STEP 1
+#define SEP '/'
 
 #define redisCmd(context, ...) static_cast<redisReply*>(redisCommand(context, __VA_ARGS__))
 
@@ -33,7 +34,14 @@ namespace io {
 
 class RedisInputFormat final : public InputFormatBase {
 public:
-    typedef std::pair<std::string, std::string> RecordT;
+    typedef enum RedisDataType {
+        String,
+        List,
+        Hash,
+        Set,
+        ZSet
+    } RedisDataType;
+    typedef std::pair<RedisDataType, std::string> RecordT;
 
 public:
     RedisInputFormat();
@@ -59,7 +67,7 @@ private:
 private:
     std::string ip_;
     int port_;
-    struct timeval timeout_ = { 1, 500000};
+    struct timeval timeout_ = {1, 500000};
     bool need_auth_ = false;
     std::string password_;
     std::map<std::string, redisContext *> cons_;
@@ -70,6 +78,7 @@ private:
 
     std::vector<RecordT> records_vector_;
     bool if_pop_record_ = false;
+    bool if_all_assigned_ = false;
     std::vector<std::vector<RedisRangeKey> > best_keys_;
 
     const uint16_t crc16tab_[256]= {

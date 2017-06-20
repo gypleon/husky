@@ -47,38 +47,6 @@ void RedisSplit::set_port(int port) { port_ = port; }
 void RedisSplit::set_sstart(int start) { slots_start_ = start; }
 void RedisSplit::set_send(int end) { slots_end_ = end; }
 
-// RedisBestKeys
-RedisBestKeys::RedisBestKeys() {
-    best_keys_.clear();
-}
-
-RedisBestKeys::RedisBestKeys(const RedisBestKeys& other) {
-    best_keys_ = other.best_keys_;
-}
-
-RedisBestKeys::~RedisBestKeys() {
-    best_keys_.clear();
-}
-
-void RedisBestKeys::add_key(RedisSplit rs, RedisRangeKey key) {
-    best_keys_[rs].push_back(key);
-}
-
-void RedisBestKeys::set_keys(std::map<RedisSplit, std::vector<RedisRangeKey> > best_keys) {
-    best_keys_ = best_keys;
-}
-
-const std::map<RedisSplit, std::vector<RedisRangeKey> >& RedisBestKeys::get_keys() {
-    return best_keys_;
-}
-
-int RedisBestKeys::del_split(const RedisSplit& split) {
-    int pre_size = best_keys_.size();
-    auto it = best_keys_.find(split);
-    best_keys_.erase(it);
-    return best_keys_.size() - pre_size;
-}
-
 // RedisSplitGroup
 RedisSplitGroup::RedisSplitGroup(RedisSplit master) { 
     add_member(master.get_id());
@@ -104,18 +72,6 @@ void RedisSplitGroup::update_priority() {
 
 void RedisSplitGroup::sort_members() {
     sorted_members_.clear();
-    /* TODO: to be deprecated
-    int cur_priority = members_.size();
-    while ( cur_priority > 0 ) {
-        for ( auto& member : members_ ) {
-            if ( get_priority(member) == cur_priority-1 ) {
-                sorted_members_.insert(sorted_members_.begin(), member);
-                cur_priority--;
-            }
-        }
-    }
-    */ 
-    // TODO: sort members_ directly
     int lowest_priority = members_.size();
     for ( int higher_priority = 0; higher_priority < lowest_priority; higher_priority++ ) {
         for ( auto& member : members_ ) {
@@ -146,20 +102,7 @@ const std::vector<std::string>& RedisSplitGroup::get_sorted_members() {
 }
 
 // BinStream series
-BinStream& operator<<(BinStream& stream, RedisSplit& split) {
-    stream << split.is_valid();
-    stream << split.get_sn();
-    stream << split.get_id();
-    stream << split.get_ip();
-    stream << split.get_port();
-    stream << split.get_master();
-    stream << split.get_sstart();
-    stream << split.get_send();
-    return stream;
-}
-
 // for RedisOutputFormat::redis_masters_info
-// TODO: why RedisSplit changed into const
 BinStream& operator<<(BinStream& stream, const RedisSplit& split) {
     stream << split.is_valid();
     stream << split.get_sn();
@@ -200,51 +143,11 @@ BinStream& operator>>(BinStream& stream, RedisSplit& split) {
     return stream;
 }
 
-BinStream& operator<<(BinStream& stream, RedisBestKeys& keys) {
-    std::map<RedisSplit, std::vector<RedisRangeKey> > best_keys = keys.get_keys();
-    // stream << best_keys;
-    stream << best_keys.size();
-    RedisSplit split;
-    for (auto& b_keys : best_keys){
-        split = b_keys.first;
-        stream << split;
-        stream << b_keys.second.size();
-        for (auto& key : b_keys.second){
-            stream << key;
-        }
-    }
-    return stream;
-}
-
-BinStream& operator>>(BinStream& stream, RedisBestKeys& keys) {
-    std::map<RedisSplit, std::vector<RedisRangeKey> > best_keys;
-    // stream >> best_keys;
-    size_t num_splits;
-    RedisSplit b_keys;
-    stream >> num_splits;
-    for ( int i=0; i<num_splits; i++){
-        stream >> b_keys;
-        size_t num_keys;
-        stream >> num_keys;
-        for ( int j=0; j<num_keys; j++){
-            RedisRangeKey key;
-            stream >> key;
-            best_keys[b_keys].push_back(key);
-        }
-    }
-    keys.set_keys(best_keys);
-    return stream;
-}
-
-BinStream& operator<<(BinStream& stream, RedisRangeKey& key) {
-    stream << key.str_ << key.start_ << key.end_;
-    return stream;
-}
-
 BinStream& operator<<(BinStream& stream, const RedisRangeKey& key) {
     stream << key.str_ << key.start_ << key.end_;
     return stream;
 }
+
 BinStream& operator>>(BinStream& stream, RedisRangeKey& key) {
     stream >> key.str_ >> key.start_ >> key.end_;
     return stream;

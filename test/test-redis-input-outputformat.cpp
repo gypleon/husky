@@ -27,42 +27,54 @@
 #include "boost/property_tree/json_parser.hpp"
 
 namespace pt = boost::property_tree;
+namespace hi = husky::io;
 
 void test() {
-    auto& inputformat = husky::io::InputFormatStore::create_redis_inputformat();
+    auto& inputformat = hi::InputFormatStore::create_redis_inputformat();
     inputformat.set_server();
     // inputformat.set_auth(pwd);
 
-    husky::io::RedisOutputFormat outputformat;
+    hi::RedisOutputFormat outputformat;
     outputformat.set_server();
     // outputformat.set_auth(pwd);
 
-    auto read_and_write = [&](husky::io::RedisInputFormat::RecordT& record_pair) {
+    std::string sfx("_x");
+
+    auto read_and_write = [&](hi::RedisInputFormat::RecordT& record_pair) {
+        auto datatype = record_pair.first;
+
         pt::ptree reader;
         std::stringstream jsonstream;
-        std::string datatype = record_pair.first;
         jsonstream << record_pair.second;
         pt::read_json(jsonstream, reader);
 
         const auto& key = reader.begin()->first;
 
-        if ("string" == datatype) {
-            outputformat.commit(key, reader.begin()->second.get_value<std::string>());
-        } else if ("hash" == datatype) {
-            std::map<std::string, std::string> map_data;
-            for (auto& kv : reader.begin()->second) {
-                map_data[kv.first] = kv.second.get_value<std::string>();
-            }
-            outputformat.commit(key, map_data);
-        } else if ("list" == datatype) {
-            // for Redis List, commit() performs as creating and/or appending list elements
-            std::vector<std::string> vec_data;
-            for (auto& kv : reader.begin()->second) {
-                vec_data.push_back(kv.second.get_value<std::string>());
-            }
-            outputformat.commit(key, vec_data);
-        } else {
-            husky::LOG_E << "undefined data structure";
+        switch (datatype) {
+            case hi::RedisInputFormat::RedisDataType::String: 
+                {
+                    outputformat.commit(key + sfx, reader.begin()->second.get_value<std::string>());
+                } break;
+            case hi::RedisInputFormat::RedisDataType::List: 
+                {
+                    std::map<std::string, std::string> map_data;
+                    for (auto& kv : reader.begin()->second) {
+                        map_data[kv.first] = kv.second.get_value<std::string>();
+                    }
+                    outputformat.commit(key + sfx, map_data);
+                } break;
+            case hi::RedisInputFormat::RedisDataType::Hash: 
+                {
+                    // for Redis List, commit() performs as creating and/or appending list elements
+                    std::vector<std::string> vec_data;
+                    for (auto& kv : reader.begin()->second) {
+                        vec_data.push_back(kv.second.get_value<std::string>());
+                    }
+                    outputformat.commit(key + sfx, vec_data);
+                } break;
+            default:
+                husky::LOG_E << "undefined data structure";
+                break;
         }
     };
 
