@@ -26,14 +26,6 @@ int main(int argc, char** argv) {
     args.push_back("hdfs_namenode");
     args.push_back("hdfs_namenode_port");
 #endif
-#ifdef WITH_REDIS
-    args.push_back("redis_ip");
-    args.push_back("redis_port");
-    args.push_back("redis_key_split_threshold");
-    args.push_back("redis_keys_file");
-    args.push_back("redis_keys_pattern");
-    args.push_back("redis_keys_list");
-#endif
     if (husky::init_with_args(argc, argv, args)) {
         auto& master = husky::Master::get_instance();
         master.setup();

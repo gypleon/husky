@@ -17,19 +17,14 @@
 #include <utility>
 #include <vector>
 
-
-#include "hiredis/hiredis.h"
-#include "boost/property_tree/ptree.hpp"
 #include "boost/property_tree/json_parser.hpp"
+#include "boost/property_tree/ptree.hpp"
 #include "boost/tokenizer.hpp"
 
 #include "base/serialization.hpp"
 #include "core/engine.hpp"
 #include "io/input/inputformat_store.hpp"
-#include "io/output/redis_outputformat.hpp"
 #include "lib/aggregator_factory.hpp"
-
-namespace pt = boost::property_tree;
 
 class Word {
    public:
@@ -48,50 +43,33 @@ bool operator<(const std::pair<int, std::string>& a, const std::pair<int, std::s
 }
 
 void wc() {
-    auto& inputformat = husky::io::InputFormatStore::create_redis_inputformat();
-    inputformat.set_server();
-
-    husky::io::RedisOutputFormat outputformat;
-    outputformat.set_server();
-
+    std::string server(husky::Context::get_param("elasticsearch_server"));
+    std::string index(husky::Context::get_param("elasticsearch_index"));
+    std::string type(husky::Context::get_param("elaticsearch_type"));
+    auto& infmt = husky::io::InputFormatStore::create_elasticsearch_inputformat();
+    infmt.set_server(server);
+    std::string query(" { \"query\": { \"match_all\":{}}}");
+    infmt.scan_fully(index, type, query, 1000);
     auto& word_list = husky::ObjListStore::create_objlist<Word>();
-    auto& ch = husky::ChannelStore::create_push_combined_channel<int, husky::SumCombiner<int>>(inputformat, word_list);
+    auto& ch = husky::ChannelStore::create_push_combined_channel<int, husky::SumCombiner<int>>(infmt, word_list);
 
-    auto parse_wc = [&](husky::io::RedisInputFormat::RecordT& record_pair) {
-        auto datatype = record_pair.first;
-
-        pt::ptree reader, content_reader;
-        std::stringstream jsonstream, content_stream;
-        jsonstream << record_pair.second;
-        pt::read_json(jsonstream, reader);
-
-        switch (datatype) {
-            case husky::io::RedisInputFormat::RedisDataType::String: 
-                {
-                    content_stream << reader.begin()->second.get_value<std::string>();
-                    pt::read_json(content_stream, content_reader);
-                    try {
-                        std::string content = content_reader.get<std::string>("content");
-                        boost::char_separator<char> sep(" \t");
-                        boost::tokenizer<boost::char_separator<char>> tok(content, sep);
-                        for (auto& w : tok) {
-                            ch.push(1, w);
-                        }
-                    }
-                    catch (pt::ptree_bad_path) {
-                        husky::LOG_E << "invalid content field";
-                        return;
-                    }
-                } break;
-            default:
-                return;
+    auto parse_wc = [&](std::string& chunk) {
+        if (chunk.size() == 0)
+            return;
+        boost::property_tree::ptree pt;
+        std::stringstream ss(chunk);
+        read_json(ss, pt);
+        std::string content = pt.get_child("_source").get<std::string>("content");
+        boost::char_separator<char> sep(" \t");
+        boost::tokenizer<boost::char_separator<char>> tok(content, sep);
+        for (auto& w : tok) {
+            ch.push(1, w);
         }
     };
-
-    husky::load(inputformat, parse_wc);
+    husky::load(infmt, parse_wc);
 
     // Show topk words.
-    const int kMaxNum = 10;
+    const int kMaxNum = 100;
     typedef std::set<std::pair<int, std::string>> TopKPairs;
     auto add_to_topk = [](TopKPairs& pairs, const std::pair<int, std::string>& p) {
         if (pairs.size() == kMaxNum && *pairs.begin() < p)
@@ -102,8 +80,9 @@ void wc() {
     husky::lib::Aggregator<TopKPairs> unique_topk(
         TopKPairs(),
         [add_to_topk](TopKPairs& a, const TopKPairs& b) {
-            for (auto& i : b)
+            for (auto& i : b) {
                 add_to_topk(a, i);
+            }
         },
         [](TopKPairs& a) { a.clear(); },
         [add_to_topk](husky::base::BinStream& in, TopKPairs& pairs) {
@@ -127,17 +106,16 @@ void wc() {
         for (auto& i : unique_topk.get_value())
             husky::LOG_I << i.second << " " << i.first;
     }
-
-    /* Output result to Redis as a Hash table
-    std::string result_key("WordCountResult");
-    std::map<std::string, int> result_map;
-    outputformat.commit(result_key, result_map);
-    */
 }
 
 int main(int argc, char** argv) {
-    if (!husky::init_with_args(argc, argv, {"redis_hostname", "redis_port", "redis_keys_pattern"}))
-        return 1;
-    husky::run_job(wc);
-    return 0;
+    std::vector<std::string> args;
+    args.push_back("elasticsearch_server");
+    args.push_back("elasticsearch_index");
+    args.push_back("elasticsearch_type");
+    if (husky::init_with_args(argc, argv, args)) {
+        husky::run_job(wc);
+        return 0;
+    }
+    return 1;
 }

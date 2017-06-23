@@ -102,19 +102,50 @@ endif(WITHOUT_MONGODB)
     
 ### Redis ###
 
-find_path(REDISCLIENT_INCLUDE_DIR NAMES hiredis PATHS /home/1155081867/development/redis-3.2.4/deps)
-find_library(REDISCLIENT_LIBRARY NAMES hiredis PATHS /home/1155081867/development/redis-3.2.4/deps/hiredis)
-if (REDISCLIENT_INCLUDE_DIR AND REDISCLIENT_LIBRARY)
+if(REDISCLIENT_SEARCH_PATH)
+    find_path(REDISCLIENT_INCLUDE_DIR NAMES hiredis PATHS ${REDISCLIENT_SEARCH_PATH})
+    find_library(REDISCLIENT_LIBRARY NAMES hiredis PATHS ${REDISCLIENT_SEARCH_PATH})
+else(REDISCLIENT_SEARCH_PATH)
+    find_path(REDISCLIENT_INCLUDE_DIR NAMES hiredis)
+    find_library(REDISCLIENT_LIBRARY NAMES hiredis)
+endif(REDISCLIENT_SEARCH_PATH)
+if(REDISCLIENT_INCLUDE_DIR AND REDISCLIENT_LIBRARY)
     set(REDISCLIENT_FOUND true)
 endif(REDISCLIENT_INCLUDE_DIR AND REDISCLIENT_LIBRARY)
-if (REDISCLIENT_FOUND)
+if(REDISCLIENT_FOUND)
     set(REDISCLIENT_DEFINITION "-DWITH_REDIS")
     message (STATUS "Found Hiredis:")
     message (STATUS "  (Headers)       ${REDISCLIENT_INCLUDE_DIR}")
     message (STATUS "  (Library)       ${REDISCLIENT_LIBRARY}")
     message (STATUS "  (Definition)    ${REDISCLIENT_DEFINITION}")
 else(REDISCLIENT_FOUND)
-    message (STATUS "Could NOT find Hiredis")
+    if(WIN32)
+        message (STATUS "Redis and hiredis are currently not available on win32")
+    else(WIN32)
+        message (STATUS "hiredis will be included as a third party:")
+        include(ExternalProject)
+        set(THIRDPARTY_DIR ${PROJECT_SOURCE_DIR}/third_party)
+        if(NOT REDISCLIENT_INCLUDE_DIR OR NOT REDISCLIENT_LIBRARY)
+            set(REDIS_INSTALL "cp -a")
+            ExternalProject_Add(
+                hiredis
+                GIT_REPOSITORY "https://github.com/redis/hiredis"
+                GIT_TAG "v0.11.0"
+                PREFIX ${THIRDPARTY_DIR}
+                UPDATE_COMMAND ""
+                CONFIGURE_COMMAND ""
+                BUILD_COMMAND make
+                BUILD_IN_SOURCE 1
+                INSTALL_COMMAND mkdir -p ${PROJECT_BINARY_DIR}/include/hiredis ${PROJECT_BINARY_DIR}/lib COMMAND ${REDIS_INSTALL} ${THIRDPARTY_DIR}/src/hiredis/hiredis.h ${PROJECT_BINARY_DIR}/include/hiredis/hiredis.h COMMAND ${REDIS_INSTALL} ${THIRDPARTY_DIR}/src/hiredis/async.h ${PROJECT_BINARY_DIR}/include/hiredis/async.h COMMAND ${REDIS_INSTALL} ${THIRDPARTY_DIR}/src/hiredis/adapters ${PROJECT_BINARY_DIR}/include/hiredis/adapters COMMAND ${REDIS_INSTALL} ${THIRDPARTY_DIR}/src/hiredis/libhiredis.so ${PROJECT_BINARY_DIR}/lib/libhiredis.so.0.11 COMMAND ln -sf ${PROJECT_BINARY_DIR}/lib/libhiredis.so.0.11 ${PROJECT_BINARY_DIR}/lib/libhiredis.so.0 COMMAND ln -sf ${PROJECT_BINARY_DIR}/lib/libhiredis.so.0 ${PROJECT_BINARY_DIR}/lib/libhiredis.so COMMAND ${REDIS_INSTALL} ${THIRDPARTY_DIR}/src/hiredis/libhiredis.a ${PROJECT_BINARY_DIR}/lib/libhiredis.a
+            )
+            list(APPEND external_project_dependencies hiredis)
+        endif(NOT REDISCLIENT_INCLUDE_DIR OR NOT REDISCLIENT_LIBRARY)
+        set(REDISCLIENT_INCLUDE_DIR "${PROJECT_BINARY_DIR}/include/hiredis")
+        set(REDISCLIENT_LIBRARY "${PROJECT_BINARY_DIR}/lib/libhiredis.so")
+        message (STATUS "  (Headers should be)       ${REDISCLIENT_INCLUDE_DIR}")
+        message (STATUS "  (Library should be)       ${REDISCLIENT_LIBRARY}")
+        set(REDISCLIENT_FOUND true)
+    endif(WIN32)
 endif(REDISCLIENT_FOUND)
 if(WITHOUT_REDIS)
     unset(REDISCLIENT_FOUND)
@@ -156,3 +187,36 @@ if(WITHOUT_THRIFT)
     unset(THRIFT_FOUND)
     message(STATUS "Not using Thrift due to WITHOUT_THRIFT option")
 endif(WITHOUT_THRIFT)
+
+### ORC ###
+
+#NAMES liblz4.a liborc.a libprotobuf.a libsnappy.a libz.a 
+#NAMES ColumnPrinter.hh Int128.hh MemoryPool.hh orc-config.hh OrcFile.hh Reader.hh Type.hh  Vector.hh
+find_path(ORC_INCLUDE_DIR NAMES orc/OrcFile.hh)
+find_library(ORC_L0 NAMES protobuf NO_CMAKE_ENVIRONMENT_PATH NO_CMAKE_SYSTEM_PATH NO_SYSTEM_ENVIRONMENT_PATH)
+find_library(ORC_L1 NAMES z NO_CMAKE_ENVIRONMENT_PATH NO_CMAKE_SYSTEM_PATH NO_SYSTEM_ENVIRONMENT_PATH)
+find_library(ORC_L2 NAMES lz4 NO_CMAKE_ENVIRONMENT_PATH NO_CMAKE_SYSTEM_PATH NO_SYSTEM_ENVIRONMENT_PATH)
+find_library(ORC_L3 NAMES snappy NO_CMAKE_ENVIRONMENT_PATH NO_CMAKE_SYSTEM_PATH NO_SYSTEM_ENVIRONMENT_PATH)
+find_library(ORC_L4 NAMES orc)
+
+if (ORC_INCLUDE_DIR AND ORC_L1 AND ORC_L0 AND ORC_L2 AND ORC_L3 AND ORC_L4)
+    set(ORC_FOUND true)
+endif (ORC_INCLUDE_DIR AND ORC_L1 AND ORC_L0 AND ORC_L2 AND ORC_L3 AND ORC_L4)
+if (ORC_FOUND)
+    set(ORC_DEFINITION "-DWITH_ORC")
+    # The order is important for dependencies.
+    set(ORC_LIBRARY ${ORC_L4} ${ORC_L3} ${ORC_L2} ${ORC_L1} ${ORC_L0})
+    message (STATUS "Found ORC:")
+    message (STATUS "  (Headers)       ${ORC_INCLUDE_DIR}")
+    message (STATUS "  (Library)       ${ORC_L0}")
+    message (STATUS "  (Library)       ${ORC_L1}")
+    message (STATUS "  (Library)       ${ORC_L2}")
+    message (STATUS "  (Library)       ${ORC_L3}")
+    message (STATUS "  (Library)       ${ORC_L4}")
+else(ORC_FOUND)
+    message (STATUS "Could NOT find ORC")
+endif(ORC_FOUND)
+if(WITHOUT_ORC)
+    unset(ORC_FOUND)
+    message(STATUS "Not using ORC due to WITHOUT_ORC option")
+endif(WITHOUT_ORC)

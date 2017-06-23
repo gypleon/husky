@@ -53,6 +53,8 @@ private:
     typedef std::vector<std::vector<std::vector<RedisRangeKey> > > WORKER_KEYS_POOLS;
 
 private:
+    bool load_parameters();
+
     void master_redis_req_handler();
     void master_redis_qry_req_handler();
     void master_redis_req_end_handler();
@@ -125,7 +127,7 @@ private:
 
     // keys from pattern
     bool is_pattern_imported_ = false;
-    std::string keys_pattern_;
+    std::string keys_pattern_ = "";
 
     // keys from Redis List
     std::string keys_list_;
@@ -135,7 +137,7 @@ private:
 
     // workload balance optimization, in microseconds 
     int local_served_latency_ = 100;
-    int non_local_served_latency_ = 200;
+    int non_local_served_latency_ = 100;
     std::map<std::string, std::vector<int> > keys_latency_map_;
     std::vector<unsigned long> procs_load_;
     std::vector<std::vector<int> > proc_keys_stat_;

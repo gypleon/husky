@@ -85,7 +85,7 @@ void test() {
 }
 
 int main(int argc, char** argv) {
-    if (!husky::init_with_args(argc, argv, {"redis_ip", "redis_port", "redis_keys_pattern"}))
+    if (!husky::init_with_args(argc, argv, {"redis_hostname", "redis_port", "redis_keys_pattern"}))
         return 1;
     husky::run_job(test);
     return 0;

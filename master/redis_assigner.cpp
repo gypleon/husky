@@ -59,6 +59,54 @@ RedisSplitAssigner::RedisSplitAssigner() {
     Master::get_instance().register_setup_handler(std::bind(&RedisSplitAssigner::master_setup_handler, this));
 }
 
+bool RedisSplitAssigner::load_parameters() {
+    if ("" == Context::get_param("redis_hostname") || "" == Context::get_param("redis_port")) {
+        LOG_E << "Redis required parameters missed:";
+        LOG_E << "  --redis_hostname HOSTNAME";
+        LOG_E << "  --redis_port     PORT";
+        return false;
+    } else {
+        ip_ = Context::get_param("redis_hostname");
+        port_ = atoi(Context::get_param("redis_port").c_str()); 
+        if (Context::get_param("redis_key_split_threshold").compare("")) {
+            key_split_size_ = stoi(Context::get_param("redis_key_split_threshold"));
+        } else {
+            key_split_size_ = 0;
+            LOG_I << "split heavy List: \033[1;32m[OFF]\033[0m";
+        }
+        if ((keys_path_ = Context::get_param("redis_keys_file")).compare("")) {
+            keys_file_.open(keys_path_, std::ios::in);
+        } else {
+            LOG_I << "load keys from file: \033[1;32m[OFF]\033[0m";
+        }
+        if (Context::get_param("redis_keys_pattern").compare("")) {
+            keys_pattern_ = Context::get_param("redis_keys_pattern"); 
+        } else {
+            keys_pattern_ = "";
+            LOG_I << "load keys from pattern: \033[1;32m[OFF]\033[0m";
+        }
+        if (Context::get_param("redis_keys_list").compare("")) {
+            keys_list_ = Context::get_param("redis_keys_list"); 
+        } else {
+            keys_list_ = "";
+            LOG_I << "load keys from list: \033[1;32m[OFF]\033[0m";
+        }
+        if (Context::get_param("redis_local_latency").compare("")) {
+            local_served_latency_ = atoi(Context::get_param("redis_local_latency").c_str()); 
+        } else {
+            local_served_latency_ = 100;
+            LOG_I << "local latency: \033[1;32m[DEFAULT 100 microseconds]\033[0m";
+        }
+        if (Context::get_param("redis_non_local_latency").compare("")) {
+            non_local_served_latency_ = atoi(Context::get_param("redis_non_local_latency").c_str()); 
+        } else {
+            non_local_served_latency_ = 100;
+            LOG_I << "remote latency: \033[1;32m[DEFAULT 100 microseconds]\033[0m";
+        }
+        return true;
+    }
+}
+
 void RedisSplitAssigner::master_redis_qry_req_handler() {
     auto& master = Master::get_instance();
     auto master_socket = master.get_socket();
@@ -152,16 +200,8 @@ void RedisSplitAssigner::master_redis_req_end_handler() {
 }
 
 void RedisSplitAssigner::master_setup_handler() {
-    ip_ = Context::get_param("redis_ip");
-    port_ = atoi(Context::get_param("redis_port").c_str()); 
-    key_split_size_ = stoi(Context::get_param("redis_key_split_threshold"));
-    if ( (keys_path_ = Context::get_param("redis_keys_file")).compare("") ) {
-        keys_file_.open(keys_path_, std::ios::in);
-    }
-    keys_pattern_ = Context::get_param("redis_keys_pattern").c_str(); 
-    keys_list_ = Context::get_param("redis_keys_list").c_str(); 
-    local_served_latency_ = atoi(Context::get_param("redis_local_latency").c_str()); 
-    non_local_served_latency_ = atoi(Context::get_param("redis_non_local_latency").c_str()); 
+    if (!load_parameters()) return;
+
     seed_ = std::chrono::system_clock::now().time_since_epoch().count();
     srand(seed_);
 

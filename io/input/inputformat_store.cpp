@@ -78,6 +78,17 @@ BinaryInputFormat& InputFormatStore::create_binary_inputformat(const std::string
     return *binary_input_format;
 }
 
+#ifdef WITH_ORC
+ORCInputFormat& InputFormatStore::create_orc_inputformat() {
+    InputFormatMap& inputformat_map = get_inputformat_map();
+    int id = g_gen_inputformat_id++;
+    ASSERT_MSG(inputformat_map.find(id) == inputformat_map.end(), "Should not be reached");
+    auto* orc_input_format = new ORCInputFormat();
+    inputformat_map.insert({id, orc_input_format});
+    return *orc_input_format;
+}
+#endif
+
 #ifdef WITH_THRIFT
 FlumeInputFormat& InputFormatStore::create_flume_inputformat(std::string rcv_host, int rcv_port) {
     InputFormatMap& inputformat_map = get_inputformat_map();
@@ -110,6 +121,15 @@ RedisInputFormat& InputFormatStore::create_redis_inputformat() {
     return *redis_input_format;
 }
 #endif
+
+ElasticsearchInputFormat& InputFormatStore::create_elasticsearch_inputformat() {
+    InputFormatMap& inputformat_map = get_inputformat_map();
+    int id = g_gen_inputformat_id++;
+    ASSERT_MSG(inputformat_map.find(id) == inputformat_map.end(), "Should not be reached");
+    auto* elasticsearch_input_format = new ElasticsearchInputFormat();
+    inputformat_map.insert({id, elasticsearch_input_format});
+    return *elasticsearch_input_format;
+}
 
 void InputFormatStore::drop_all_inputformats() {
     if (s_inputformat_map == nullptr)

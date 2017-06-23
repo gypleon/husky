@@ -49,6 +49,12 @@ target_link_libraries(WordCountMR ${husky})
 target_link_libraries(WordCountMR ${HUSKY_EXTERNAL_LIB})
 husky_default_properties(WordCountMR)
 
+# WordCountES
+add_executable(WordCountES wc_mr_elasticsearch.cpp)
+target_link_libraries(WordCountES ${husky})
+target_link_libraries(WordCountES ${HUSKY_EXTERNAL_LIB})
+husky_default_properties(WordCountES)
+
 # WordCountMongo
 add_executable(WordCountMongo wc_mr_mongo.cpp)
 target_link_libraries(WordCountMongo ${husky})
@@ -66,6 +72,12 @@ add_executable(WordCountRedis wc_mr_redis.cpp)
 target_link_libraries(WordCountRedis ${husky})
 target_link_libraries(WordCountRedis ${HUSKY_EXTERNAL_LIB})
 husky_default_properties(WordCountRedis)
+
+# WordCountORC
+add_executable(WordCountORC wc_mr_orc.cpp)
+target_link_libraries(WordCountORC ${husky})
+target_link_libraries(WordCountORC ${HUSKY_EXTERNAL_LIB})
+husky_default_properties(WordCountORC)
 
 # PI
 add_executable(PI pi.cpp)
@@ -138,3 +150,9 @@ add_executable(NN_MNIST nn_mnist.cpp)
 target_link_libraries(NN_MNIST ${husky})
 target_link_libraries(NN_MNIST ${HUSKY_EXTERNAL_LIB})
 husky_default_properties(NN_MNIST)
+
+# Cube
+add_executable(Cube cube.cpp)
+target_link_libraries(Cube ${husky})
+target_link_libraries(Cube ${HUSKY_EXTERNAL_LIB})
+husky_default_properties(Cube)
