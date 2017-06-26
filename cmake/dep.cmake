@@ -126,29 +126,36 @@ else(REDISCLIENT_FOUND)
         include(ExternalProject)
         set(THIRDPARTY_DIR ${PROJECT_SOURCE_DIR}/third_party)
         if(NOT REDISCLIENT_INCLUDE_DIR OR NOT REDISCLIENT_LIBRARY)
-            set(REDIS_INSTALL "cp -a")
+            set(REDIS_INSTALL "cp")
             ExternalProject_Add(
                 hiredis
                 GIT_REPOSITORY "https://github.com/redis/hiredis"
-                GIT_TAG "v0.11.0"
+                GIT_TAG "v0.13.3"
                 PREFIX ${THIRDPARTY_DIR}
                 UPDATE_COMMAND ""
                 CONFIGURE_COMMAND ""
-                BUILD_COMMAND make
+                # TODO: if remove "-pedantic" strict Warnings.
+                BUILD_COMMAND sed -i "s/ -pedantic//g" ${THIRDPARTY_DIR}/src/hiredis/Makefile COMMAND make dynamic COMMAND make static
                 BUILD_IN_SOURCE 1
-                INSTALL_COMMAND mkdir -p ${PROJECT_BINARY_DIR}/include/hiredis ${PROJECT_BINARY_DIR}/lib COMMAND ${REDIS_INSTALL} ${THIRDPARTY_DIR}/src/hiredis/hiredis.h ${PROJECT_BINARY_DIR}/include/hiredis/hiredis.h COMMAND ${REDIS_INSTALL} ${THIRDPARTY_DIR}/src/hiredis/async.h ${PROJECT_BINARY_DIR}/include/hiredis/async.h COMMAND ${REDIS_INSTALL} ${THIRDPARTY_DIR}/src/hiredis/adapters ${PROJECT_BINARY_DIR}/include/hiredis/adapters COMMAND ${REDIS_INSTALL} ${THIRDPARTY_DIR}/src/hiredis/libhiredis.so ${PROJECT_BINARY_DIR}/lib/libhiredis.so.0.11 COMMAND ln -sf ${PROJECT_BINARY_DIR}/lib/libhiredis.so.0.11 ${PROJECT_BINARY_DIR}/lib/libhiredis.so.0 COMMAND ln -sf ${PROJECT_BINARY_DIR}/lib/libhiredis.so.0 ${PROJECT_BINARY_DIR}/lib/libhiredis.so COMMAND ${REDIS_INSTALL} ${THIRDPARTY_DIR}/src/hiredis/libhiredis.a ${PROJECT_BINARY_DIR}/lib/libhiredis.a
+                INSTALL_COMMAND mkdir -p ${PROJECT_BINARY_DIR}/include/hiredis/adapters ${PROJECT_BINARY_DIR}/lib COMMAND ${REDIS_INSTALL} ${THIRDPARTY_DIR}/src/hiredis/hiredis.h ${PROJECT_BINARY_DIR}/include/hiredis/hiredis.h COMMAND ${REDIS_INSTALL} ${THIRDPARTY_DIR}/src/hiredis/read.h ${PROJECT_BINARY_DIR}/include/hiredis/read.h COMMAND ${REDIS_INSTALL} ${THIRDPARTY_DIR}/src/hiredis/sds.h ${PROJECT_BINARY_DIR}/include/hiredis/sds.h COMMAND ${REDIS_INSTALL} ${THIRDPARTY_DIR}/src/hiredis/async.h ${PROJECT_BINARY_DIR}/include/hiredis/async.h COMMAND ${REDIS_INSTALL} ${THIRDPARTY_DIR}/src/hiredis/adapters/ae.h ${PROJECT_BINARY_DIR}/include/hiredis/adapters/ae.h COMMAND ${REDIS_INSTALL} ${THIRDPARTY_DIR}/src/hiredis/adapters/libev.h ${PROJECT_BINARY_DIR}/include/hiredis/adapters/libev.h COMMAND ${REDIS_INSTALL} ${THIRDPARTY_DIR}/src/hiredis/adapters/libevent.h ${PROJECT_BINARY_DIR}/include/hiredis/adapters/libevent.h COMMAND ${REDIS_INSTALL} ${THIRDPARTY_DIR}/src/hiredis/libhiredis.so ${PROJECT_BINARY_DIR}/lib/libhiredis.so.0.13 COMMAND ln -sf ${PROJECT_BINARY_DIR}/lib/libhiredis.so.0.13 ${PROJECT_BINARY_DIR}/lib/libhiredis.so.0 COMMAND ln -sf ${PROJECT_BINARY_DIR}/lib/libhiredis.so.0 ${PROJECT_BINARY_DIR}/lib/libhiredis.so COMMAND ${REDIS_INSTALL} ${THIRDPARTY_DIR}/src/hiredis/libhiredis.a ${PROJECT_BINARY_DIR}/lib/libhiredis.a
             )
             list(APPEND external_project_dependencies hiredis)
         endif(NOT REDISCLIENT_INCLUDE_DIR OR NOT REDISCLIENT_LIBRARY)
         set(REDISCLIENT_INCLUDE_DIR "${PROJECT_BINARY_DIR}/include/hiredis")
-        set(REDISCLIENT_LIBRARY "${PROJECT_BINARY_DIR}/lib/libhiredis.so")
+        if(BUILD_SHARED_LIBRARY)
+            set(REDISCLIENT_LIBRARY "${PROJECT_BINARY_DIR}/lib/libhiredis.so")
+        else(BUILD_SHARED_LIBRARY)
+            set(REDISCLIENT_LIBRARY "${PROJECT_BINARY_DIR}/lib/libhiredis.a")
+        endif(BUILD_SHARED_LIBRARY)
         message (STATUS "  (Headers should be)       ${REDISCLIENT_INCLUDE_DIR}")
         message (STATUS "  (Library should be)       ${REDISCLIENT_LIBRARY}")
         set(REDISCLIENT_FOUND true)
+        set(REDISCLIENT_DEFINITION "-DWITH_REDIS")
     endif(WIN32)
 endif(REDISCLIENT_FOUND)
 if(WITHOUT_REDIS)
     unset(REDISCLIENT_FOUND)
+    unset(REDISCLIENT_DEFINITION)
     message(STATUS "Not using Hiredis due to WITHOUT_REDIS option")
 endif(WITHOUT_REDIS)
 

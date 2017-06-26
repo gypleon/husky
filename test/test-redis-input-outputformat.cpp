@@ -42,39 +42,47 @@ void test() {
 
     auto read_and_write = [&](hi::RedisInputFormat::RecordT& record_pair) {
         auto datatype = record_pair.first;
-
-        pt::ptree reader;
-        std::stringstream jsonstream;
-        jsonstream << record_pair.second;
-        pt::read_json(jsonstream, reader);
-
-        const auto& key = reader.begin()->first;
-
-        switch (datatype) {
-            case hi::RedisInputFormat::RedisDataType::String: 
-                {
-                    outputformat.commit(key + sfx, reader.begin()->second.get_value<std::string>());
-                } break;
-            case hi::RedisInputFormat::RedisDataType::List: 
-                {
-                    std::map<std::string, std::string> map_data;
-                    for (auto& kv : reader.begin()->second) {
-                        map_data[kv.first] = kv.second.get_value<std::string>();
-                    }
-                    outputformat.commit(key + sfx, map_data);
-                } break;
-            case hi::RedisInputFormat::RedisDataType::Hash: 
-                {
-                    // for Redis List, commit() performs as creating and/or appending list elements
-                    std::vector<std::string> vec_data;
-                    for (auto& kv : reader.begin()->second) {
-                        vec_data.push_back(kv.second.get_value<std::string>());
-                    }
-                    outputformat.commit(key + sfx, vec_data);
-                } break;
-            default:
-                husky::LOG_E << "undefined data structure";
-                break;
+        if (hi::RedisInputFormat::RedisDataType::Null == datatype) {
+            husky::LOG_I << "waiting for keys";
+        } else {
+            pt::ptree reader;
+            std::stringstream jsonstream;
+            jsonstream << record_pair.second;
+            try {
+                pt::read_json(jsonstream, reader);
+            } 
+            catch (pt::json_parser::json_parser_error) {
+                husky::LOG_E << "json_parser_error:";
+                husky::LOG_E << record_pair.second;
+                return;
+            }
+            const auto& key = reader.begin()->first;
+            switch (datatype) {
+                case hi::RedisInputFormat::RedisDataType::String: 
+                    {
+                        outputformat.commit(key + sfx, reader.begin()->second.get_value<std::string>());
+                    } break;
+                case hi::RedisInputFormat::RedisDataType::Hash: 
+                    {
+                        std::map<std::string, std::string> map_data;
+                        for (auto& kv : reader.begin()->second) {
+                            map_data[kv.first] = kv.second.get_value<std::string>();
+                        }
+                        outputformat.commit(key + sfx, map_data);
+                    } break;
+                case hi::RedisInputFormat::RedisDataType::List: 
+                    {
+                        // for Redis List, commit() performs as creating and/or appending list elements
+                        std::vector<std::string> vec_data;
+                        for (auto& kv : reader.begin()->second) {
+                            vec_data.push_back(kv.second.get_value<std::string>());
+                        }
+                        outputformat.commit(key + sfx, vec_data);
+                    } break;
+                default:
+                    husky::LOG_E << "undefined data structure";
+                    break;
+            }
         }
     };
 

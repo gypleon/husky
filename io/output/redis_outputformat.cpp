@@ -12,19 +12,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include <string.h>
-#include <netdb.h>
-#include <sys/param.h>
-#include <netinet/in.h>
 #include <arpa/inet.h>
+#include <netdb.h>
+#include <netinet/in.h>
+#include <string.h>
+#include <sys/param.h>
+
+#include <algorithm>
+#include <map>
+#include <string>
 #include <thread>
+#include <utility>
+#include <vector>
 
 #include "io/output/redis_outputformat.hpp"
 
 #include "base/log.hpp"
 #include "core/network.hpp"
 
-// for experiments
 #include <ctime>
 #include <chrono>
 
@@ -48,8 +53,8 @@ RedisOutputFormat::RedisOutputFormat(int number_clients, int flush_buffer_size):
     splits_.clear();
 }
 
-RedisOutputFormat::~RedisOutputFormat() { 
-    records_map_.clear(); 
+RedisOutputFormat::~RedisOutputFormat() {
+    records_map_.clear();
     for (auto& con : cons_) {
         if (con.second.first) {
             redisFree(con.second.first);
@@ -61,7 +66,7 @@ RedisOutputFormat::~RedisOutputFormat() {
     sorted_split_group_name_.clear();
 }
 
-void RedisOutputFormat::set_server() { 
+void RedisOutputFormat::set_server() {
     ask_redis_masters_info();
     create_redis_con_pool();
     is_setup_ |= RedisOutputFormatSetUp::ServerSetUp;
@@ -73,7 +78,7 @@ void RedisOutputFormat::set_auth(const std::string& password) {
     is_setup_ |= RedisOutputFormatSetUp::AuthSetUp;
 }
 
-bool RedisOutputFormat::is_setup() const { 
+bool RedisOutputFormat::is_setup() const {
     return !(is_setup_ ^ RedisOutputFormatSetUp::AllSetUp);
 }
 
@@ -89,7 +94,7 @@ void RedisOutputFormat::ask_redis_masters_info() {
     for (auto& split_group : splits_) {
         sorted_split_group_name_.push_back(split_group.first);
     }
-    std::sort(sorted_split_group_name_.begin(), sorted_split_group_name_.end(), 
+    std::sort(sorted_split_group_name_.begin(), sorted_split_group_name_.end(),
             [&](std::string& a, std::string& b){
             return splits_[a].get_sstart() < splits_[b].get_sstart();
             });
@@ -98,7 +103,7 @@ void RedisOutputFormat::ask_redis_masters_info() {
 
 std::string RedisOutputFormat::parse_host(const std::string& hostname) {
     hostent * record = gethostbyname(hostname.c_str());
-    if(record == NULL){
+    if (record == NULL) {
         LOG_E << "Hostname parse failed:" << hostname;
         return "failed";
     }
@@ -109,7 +114,7 @@ std::string RedisOutputFormat::parse_host(const std::string& hostname) {
 
 void RedisOutputFormat::create_redis_con_pool() {
     redisReply *reply = NULL;
-    for (auto& split: splits_) {
+    for (auto& split : splits_) {
         std::string proc_ip = parse_host(get_hostname());
         redisContext * c = NULL;
         if (!split.second.get_ip().compare(proc_ip)) {
@@ -120,7 +125,7 @@ void RedisOutputFormat::create_redis_con_pool() {
             c = redisConnectWithTimeout(split.second.get_ip().c_str(), split.second.get_port(), timeout_);
         }
         if (NULL == c || c->err) {
-            if (c){
+            if (c) {
                 LOG_E << "Connection error: " + std::string(c->errstr);
                 redisFree(c);
             } else {
@@ -168,8 +173,6 @@ int RedisOutputFormat::flush_all() {
         c = cons_[master_id].first;
         c_count = &cons_[master_id].second;
 
-        // husky::LOG_I << key.c_str() << " " << target_slot << " " << splits_[master_id].get_ip() << ":" << splits_[master_id].get_port();
-        
         switch (data_type) {
             case RedisOutputFormat::DataType::RedisString:
                 {
@@ -192,11 +195,11 @@ int RedisOutputFormat::flush_all() {
                                     redisCmd(c, "LPUSH %s %c", key.c_str(), result);
                                 }
                             }
-                        case RedisOutputFormat::InnerDataType::Short: 
-                        case RedisOutputFormat::InnerDataType::Int: 
+                        case RedisOutputFormat::InnerDataType::Short:
+                        case RedisOutputFormat::InnerDataType::Int:
                         case RedisOutputFormat::InnerDataType::Long:
                             {
-                                std::vector<long int> result_list;
+                                std::vector<int64_t> result_list;
                                 result_stream >> result_list;
                                 for (auto& result : result_list) {
                                     redisCmd(c, "LPUSH %s %d", key.c_str(), result);
@@ -258,11 +261,11 @@ int RedisOutputFormat::flush_all() {
                                     redisCmd(c, "HSET %s %s %c", key.c_str(), result.first.c_str(), result.second);
                                 }
                             }
-                        case RedisOutputFormat::InnerDataType::Short: 
-                        case RedisOutputFormat::InnerDataType::Int: 
+                        case RedisOutputFormat::InnerDataType::Short:
+                        case RedisOutputFormat::InnerDataType::Int:
                         case RedisOutputFormat::InnerDataType::Long:
                             {
-                                std::map<std::string, long int> result_map;
+                                std::map<std::string, int64_t> result_map;
                                 result_stream >> result_map;
                                 for (auto& result : result_map) {
                                     redisCmd(c, "HSET %s %s %d", key.c_str(), result.first.c_str(), result.second);
@@ -327,16 +330,16 @@ int RedisOutputFormat::flush_all() {
 
     for (auto& con : cons_) {
         while (con.second.second-- > 0) {
-            int r = redisGetReply(con.second.first, (void **) &reply );
-            if (r == REDIS_ERR) { 
-                LOG_E << "REDIS_ERR"; 
-                exit(-1); 
+            int r = redisGetReply(con.second.first, (void **) &reply);
+            if (r == REDIS_ERR) {
+                LOG_E << "REDIS_ERR";
+                exit(-1);
             }
             // CHECKREPLY(reply);
             if (!reply) {
-                LOG_E << "NULL REPLY"; 
-            } else if (reply->type == REDIS_REPLY_ERROR) { 
-                LOG_E << "REDIS_REPLY_ERROR -> " << reply->str; 
+                LOG_E << "NULL REPLY";
+            } else if (reply->type == REDIS_REPLY_ERROR) {
+                LOG_E << "REDIS_REPLY_ERROR -> " << reply->str;
                 LOG_E << "pipeline remained -> " << con.second.second;
                 ask_redis_masters_info();
             }
@@ -352,7 +355,7 @@ int RedisOutputFormat::flush_all() {
 
     records_map_.clear();
     records_bytes_ = 0;
-    
+
     return buffer_size;
 }
 
@@ -360,7 +363,7 @@ uint16_t RedisOutputFormat::gen_slot_crc16(const char *buf, int len) {
     int counter;
     uint16_t crc = 0;
     for (counter = 0; counter < len; counter++)
-        crc = (crc<<8) ^ crc16tab_[((crc>>8) ^ *buf++)&0x00FF];
+        crc = (crc << 8) ^ crc16tab_[((crc >> 8) ^ *buf++)&0x00FF];
     return crc % 16384;
 }
 

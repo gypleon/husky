@@ -18,10 +18,10 @@
 #include <vector>
 
 
-#include "hiredis/hiredis.h"
-#include "boost/property_tree/ptree.hpp"
 #include "boost/property_tree/json_parser.hpp"
+#include "boost/property_tree/ptree.hpp"
 #include "boost/tokenizer.hpp"
+#include "hiredis/hiredis.h"
 
 #include "base/serialization.hpp"
 #include "core/engine.hpp"
@@ -59,18 +59,23 @@ void wc() {
 
     auto parse_wc = [&](husky::io::RedisInputFormat::RecordT& record_pair) {
         auto datatype = record_pair.first;
-
-        pt::ptree reader, content_reader;
-        std::stringstream jsonstream, content_stream;
-        jsonstream << record_pair.second;
-        pt::read_json(jsonstream, reader);
-
         switch (datatype) {
-            case husky::io::RedisInputFormat::RedisDataType::String: 
+            case husky::io::RedisInputFormat::RedisDataType::String:
                 {
-                    content_stream << reader.begin()->second.get_value<std::string>();
-                    pt::read_json(content_stream, content_reader);
+                    pt::ptree reader, content_reader;
+                    std::stringstream jsonstream, content_stream;
+                    jsonstream << record_pair.second;
                     try {
+                        pt::read_json(jsonstream, reader);
+                    } 
+                    catch (pt::json_parser::json_parser_error) {
+                        husky::LOG_E << "json_parser_error: " << record_pair.second;
+                        return;
+                    }
+
+                    content_stream << reader.begin()->second.get_value<std::string>();
+                    try {
+                        pt::read_json(content_stream, content_reader);
                         std::string content = content_reader.get<std::string>("content");
                         boost::char_separator<char> sep(" \t");
                         boost::tokenizer<boost::char_separator<char>> tok(content, sep);
@@ -82,8 +87,20 @@ void wc() {
                         husky::LOG_E << "invalid content field";
                         return;
                     }
+                    catch (pt::json_parser::json_parser_error) {
+                        husky::LOG_E << "json_parser_error:" << reader.begin()->second.get_value<std::string>();
+                        return;
+                    }
                 } break;
+            case husky::io::RedisInputFormat::RedisDataType::List:
+            case husky::io::RedisInputFormat::RedisDataType::Hash:
+                break;
+            case husky::io::RedisInputFormat::RedisDataType::Null:
+                // waiting for keys
+                // husky::LOG_I << "waiting more keys";
+                break;
             default:
+                husky::LOG_E << "undefined data structure";
                 return;
         }
     };

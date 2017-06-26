@@ -14,11 +14,12 @@
 
 #include "io/input/redis_split.hpp"
 
-#include <string>
 #include <map>
+#include <string>
+#include <vector>
 
-#include "base/serialization.hpp"
 #include "base/log.hpp"
+#include "base/serialization.hpp"
 
 namespace husky {
 namespace io {
@@ -48,19 +49,19 @@ void RedisSplit::set_sstart(int start) { slots_start_ = start; }
 void RedisSplit::set_send(int end) { slots_end_ = end; }
 
 // RedisSplitGroup
-RedisSplitGroup::RedisSplitGroup(RedisSplit master) { 
+RedisSplitGroup::RedisSplitGroup(RedisSplit master) {
     add_member(master.get_id());
 }
 
-RedisSplitGroup::~RedisSplitGroup() { 
+RedisSplitGroup::~RedisSplitGroup() {
     priority_.clear();
     sorted_members_.clear();
-    members_.clear(); 
+    members_.clear();
 }
 
-void RedisSplitGroup::add_member(std::string split_id) { 
+void RedisSplitGroup::add_member(std::string split_id) {
     priority_[split_id] = members_.size();
-    members_.push_back(split_id); 
+    members_.push_back(split_id);
 }
 
 void RedisSplitGroup::update_priority() {
@@ -84,17 +85,17 @@ void RedisSplitGroup::sort_members() {
     }
 }
 
-int RedisSplitGroup::get_priority(std::string member_id, bool if_balance) { 
+int RedisSplitGroup::get_priority(std::string member_id, bool if_balance) {
     int priority = priority_[member_id];
-    if ( if_balance) {
+    if (if_balance) {
         update_priority();
     }
-    return priority; 
+    return priority;
 }
 
-int RedisSplitGroup::get_num_members() { 
+int RedisSplitGroup::get_num_members() {
     assert(members_.size() == priority_.size());
-    return members_.size(); 
+    return members_.size();
 }
 
 const std::vector<std::string>& RedisSplitGroup::get_sorted_members() {
