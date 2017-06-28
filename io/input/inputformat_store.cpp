@@ -111,6 +111,17 @@ MongoDBInputFormat& InputFormatStore::create_mongodb_inputformat() {
 }
 #endif
 
+#ifdef WITH_REDIS
+RedisInputFormat& InputFormatStore::create_redis_inputformat() {
+    InputFormatMap& inputformat_map = get_inputformat_map();
+    int id = g_gen_inputformat_id++;
+    ASSERT_MSG(inputformat_map.find(id) == inputformat_map.end(), "Should not be reached");
+    auto* redis_input_format = new RedisInputFormat();
+    inputformat_map.insert({id, redis_input_format});
+    return *redis_input_format;
+}
+#endif
+
 ElasticsearchInputFormat& InputFormatStore::create_elasticsearch_inputformat() {
     InputFormatMap& inputformat_map = get_inputformat_map();
     int id = g_gen_inputformat_id++;
