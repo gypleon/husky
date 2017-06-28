@@ -67,6 +67,12 @@ target_link_libraries(WordCountFlume ${husky})
 target_link_libraries(WordCountFlume ${HUSKY_EXTERNAL_LIB})
 husky_default_properties(WordCountFlume)
 
+# WordCountRedis
+add_executable(WordCountRedis wc_mr_redis.cpp)
+target_link_libraries(WordCountRedis ${husky})
+target_link_libraries(WordCountRedis ${HUSKY_EXTERNAL_LIB})
+husky_default_properties(WordCountRedis)
+
 # WordCountORC
 add_executable(WordCountORC wc_mr_orc.cpp)
 target_link_libraries(WordCountORC ${husky})

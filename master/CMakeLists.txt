@@ -25,6 +25,10 @@ if(MONGOCLIENT_FOUND)
     list(APPEND master_plugins mongodb_assigner.cpp)
 endif(MONGOCLIENT_FOUND)
 
+if(REDISCLIENT_FOUND)
+    list(APPEND master_plugins redis_assigner.cpp)
+endif(REDISCLIENT_FOUND)
+
 if(ORC_FOUND)
     list(APPEND master_plugins orc_assigner.cpp)
 endif(ORC_FOUND)

@@ -40,6 +40,11 @@ if(MONGOCLIENT_FOUND)
     list(APPEND io-input-src-files ${io-input-mongo-src-files})
 endif(MONGOCLIENT_FOUND)
 
+if(REDISCLIENT_FOUND)
+    file(GLOB io-input-redis-src-files redis_split.cpp redis_inputformat.cpp)
+    list(APPEND io-input-src-files ${io-input-redis-src-files})
+endif(REDISCLIENT_FOUND)
+
 if(THRIFT_FOUND)
     file(GLOB io-input-flume-src-files
         flume_connector/flume_types.cpp

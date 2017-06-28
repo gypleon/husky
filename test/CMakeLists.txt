@@ -56,6 +56,17 @@ target_link_libraries(TestMongoDBOutputFormat ${husky})
 target_link_libraries(TestMongoDBOutputFormat ${HUSKY_EXTERNAL_LIB})
 husky_default_properties(TestMongoDBOutputFormat)
 
+# TestRedisOutputFormat
+add_executable(TestRedisOutputFormat test-redis-outputformat.cpp)
+target_link_libraries(TestRedisOutputFormat ${husky})
+target_link_libraries(TestRedisOutputFormat ${HUSKY_EXTERNAL_LIB})
+husky_default_properties(TestRedisOutputFormat)
+
+# TestRedisInputOutputFormat
+add_executable(TestRedisInputOutputFormat test-redis-input-outputformat.cpp)
+target_link_libraries(TestRedisInputOutputFormat ${husky})
+target_link_libraries(TestRedisInputOutputFormat ${HUSKY_EXTERNAL_LIB})
+husky_default_properties(TestRedisInputOutputFormat)
 
 # TestMongoToES
 add_executable(TestMongoToES test-mongo-to-es.cpp)
