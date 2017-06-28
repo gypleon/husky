@@ -90,6 +90,16 @@ TEST_F(TestInputFormatStore, ElasticsearchInputFormat) {
     InputFormatStore::drop_all_inputformats();
 }
 
+#ifdef WITH_MONGODB
+TEST_F(TestInputFormatStore, RedisInputFormat) {
+    auto& infmt1 = InputFormatStore::create_redis_inputformat();
+    EXPECT_EQ(InputFormatStore::size(), 1);
+    auto& infmt2 = InputFormatStore::create_redis_inputformat();
+    EXPECT_EQ(InputFormatStore::size(), 2);
+    InputFormatStore::drop_all_inputformats();
+}
+#endif
+
 }  // namespace
 }  // namespace io
 }  // namespace husky

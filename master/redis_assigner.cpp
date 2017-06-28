@@ -45,7 +45,7 @@
 #include "core/zmq_helpers.hpp"
 #include "master/master.hpp"
 
-#define CHECK(X) if ( !X || X->type == REDIS_REPLY_ERROR ) { LOG_E << "Error"; exit(-1); }
+#define CHECK_REP(X) if ( !X || X->type == REDIS_REPLY_ERROR ) { LOG_E << "Error"; exit(-1); }
 
 namespace husky {
 
@@ -156,7 +156,9 @@ void RedisSplitAssigner::master_redis_req_handler() {
 
     // deliver keys to the incoming worker
     std::vector<std::vector<RedisRangeKey> > ret;
+    LOG_I << "answer " << global_tid;
     answer_tid_best_keys(global_tid, ret);
+    LOG_I << "ret" << global_tid;
 
     /* visualize delivered keys
     for (int split_i=0; split_i<ret.size(); split_i++) {
@@ -174,6 +176,7 @@ void RedisSplitAssigner::master_redis_req_handler() {
 
     stream << worker_task_status_[global_tid];
     stream << ret;
+    LOG_I << "stream" << global_tid;
 
     zmq_sendmore_string(master_socket.get(), master.get_cur_client());
     zmq_sendmore_dummy(master_socket.get());
@@ -270,7 +273,7 @@ bool RedisSplitAssigner::refresh_splits_info() {
     // to be tested
     if (need_auth_) {
         reply = redisCmd(c, "AUTH %s", password_.c_str());
-        CHECK(reply);
+        CHECK_REP(reply);
     }
 
     int serial_number = 0;
@@ -870,7 +873,7 @@ void RedisSplitAssigner::schedule_batch_keys(std::mutex * pools_lock) {
     pools_lock->lock();
     // step 4: distribute local-served keys to workers
     std::vector<std::vector<int> > worker_keys_stat;
-    for (int worker_id; worker_id < num_workers_; worker_id++) {
+    for (int worker_id=0; worker_id < num_workers_; worker_id++) {
         std::vector<int> keys_stat{0, 0};
         worker_keys_stat.push_back(keys_stat);
         worker_num_keys_assigned_[worker_id].push(0);
