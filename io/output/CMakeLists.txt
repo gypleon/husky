@@ -27,5 +27,7 @@ if(REDISCLIENT_FOUND)
     list(APPEND io-output-src-file ${io-output-redis-src-file})
 endif(REDISCLIENT_FOUND)
 
+husky_cache_variable(io-output-src-file ${io-output-src-file})
+
 add_library(output-objs OBJECT ${io-output-src-file})
 husky_default_properties(output-objs)
