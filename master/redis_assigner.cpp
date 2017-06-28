@@ -156,9 +156,7 @@ void RedisSplitAssigner::master_redis_req_handler() {
 
     // deliver keys to the incoming worker
     std::vector<std::vector<RedisRangeKey> > ret;
-    LOG_I << "answer " << global_tid;
     answer_tid_best_keys(global_tid, ret);
-    LOG_I << "ret" << global_tid;
 
     /* visualize delivered keys
     for (int split_i=0; split_i<ret.size(); split_i++) {
@@ -176,7 +174,6 @@ void RedisSplitAssigner::master_redis_req_handler() {
 
     stream << worker_task_status_[global_tid];
     stream << ret;
-    LOG_I << "stream" << global_tid;
 
     zmq_sendmore_string(master_socket.get(), master.get_cur_client());
     zmq_sendmore_dummy(master_socket.get());
